@@ -59,11 +59,14 @@ Bay thật; hỗ trợ PX4; điều khiển học bằng RL; nhiều drone; web 
 | D7 | **Nghi vấn:** `action_mavros_node` đẩy `vx, vy, vz, yaw_rate` theo body-NED thẳng vào `/mavros/setpoint_velocity/cmd_vel_unstamped`. MAVROS nhận theo quy ước ROS (ENU/FLU), mặc định ở khung world | Có thể đảo dấu z/y/yaw (lệnh hạ thành bay lên) và sai khung body/world. **Xác minh trong SITL ở M2** |
 | D8 | `data.yaml` trỏ tới `valid/`, `test/` nhưng chỉ có `train/` | Không có tập ảnh thật để đánh giá độc lập |
 | D9 | 3 bản sao code (chỉ khác khoảng trắng) cùng 1 bản cũ hơn, không có git; `.venv` Linux/CUDA 5.2 GB nằm trong `~/Documents` đang sync iCloud | Lộn xộn, tốn đĩa, lệnh shell bị treo |
+| D10 | *(phát hiện khi kiểm kê M0)* Cả 4 file weight/ONNX đều **chỉ train trên ảnh synthetic**; dataset thật export ngày 2026-04-23, sau lần train cuối | Chưa từng có model nào học từ ảnh thật |
+| D11 | *(phát hiện khi kiểm kê M0)* `best.onnx` (bản định deploy) là **YOLO11s**, còn `best.pt` cạnh nó là YOLO11n | ONNX không phải bản export của `best.pt`; trái quy tắc "chỉ dùng n trên Hailo" của CLAUDE.md cũ |
 
 **Nguồn sự thật cho code cũ:** `fixed_yolo_circle_seg/files/` (giống hệt bản trong `deploy_files_…`
-và `UAV_node_ROS2/src/uav_deploy/main/` sau khi bỏ khác biệt khoảng trắng), cộng thêm package
+và `UAV_node_ROS2/src/uav_deploy/main/` sau khi bỏ khác biệt khoảng trắng), trừ `deploy_guide.md`
+lấy bản mới hơn trong `deploy_files_drone_competition/`; cộng thêm package
 `UAV_node_ROS2/src/uav_deploy/` (các node, 2026-04-21). Bản `yolo_circle_seg/` (2026-04-13) đã bị
-thay thế, chỉ lấy asset riêng của nó. Folder Google Drive "NodeRos2_TuHanh" là bản sao của
+thay thế. Folder Google Drive "NodeRos2_TuHanh" là bản sao của
 `deploy_files_drone_competition` (đã đối chiếu từng file node).
 
 ---
@@ -131,29 +134,37 @@ autonomous_drone/
 
 ## 4. Chuyển code cũ sang repo
 
-1. **Commit `chore: import legacy code as-is`.** Chép code cũ vào `legacy/` giữ nguyên bố cục phẳng:
-   `legacy/vision/` lấy từ `fixed_yolo_circle_seg/files/*.py|*.yaml|*.md|*.sh`,
-   `legacy/ros2/uav_deploy/` lấy từ `src/uav_deploy` (bỏ `build/ install/ log/ __pycache__`).
-   Không sửa một byte nào, để các commit refactor sau đó có diff sạch.
+1. **Import code cũ nguyên trạng** *(đã làm 2026-10-18)*. Dự án cũ không có git mà có 4 snapshot
+   (12/04, 13/04, 18–19/04, 21/04), nên mỗi snapshot là một commit `chore: import legacy …`,
+   cũ trước mới sau. Bản cuối: `legacy/vision/` từ `fixed_yolo_circle_seg/files/`,
+   `legacy/ros2/uav_deploy/` từ `src/uav_deploy` (bỏ `build/ install/ log/ __pycache__`).
+   Không sửa một byte nào (đã so 52/52 file), để các commit refactor sau đó có diff sạch.
+   Nguồn gốc từng snapshot ghi trong `legacy/README.md`.
 2. **Không đưa file nhị phân vào git.** `.gitignore` chặn `*.pt *.onnx *.hef *.mp4 *.zip *.npz`,
    `data/`, `runs/`, `.venv/`, `docs/private/`. Các asset upload lên **GitHub Release
-   `legacy-assets-v0`**; `scripts/fetch_assets.sh` tải về và kiểm sha256:
-   - `best.pt` (5.7 MB), `best.onnx` (38.6 MB)
-   - `dataset.zip` (đóng gói lại, bỏ `__MACOSX`)
-   - `real_domain_images_new.zip` (300 frame thật chưa gán nhãn)
-   - `hailo_calib.zip`
-   - các video kết quả khác nhau: `output_{2,3,7,8}`, `final_flight_result{,_new}`, `ket_qua`, `result{,_new}`
-3. **Chỉ giữ local:** PDF thể lệ và `Thể lệ_dịch.docx` → `docs/private/` (gitignore).
+   `legacy-assets-v0`** (chủ dự án xác nhận toàn bộ, kể cả dataset, được public);
+   `scripts/fetch_assets.sh` tải về và kiểm sha256 theo `assets/SHA256SUMS`. Tên asset mô tả đúng
+   nội dung (bảng đầy đủ trong `legacy/README.md`):
+   - weights: `yolo11s-seg_synth_2026-04-09.pt`, `yolo11n-seg_synth_2026-04-14.pt` và hai bản ONNX
+     YOLO11s (xem D10, D11)
+   - `dataset-real-286.zip` (286 ảnh thật có nhãn, đã remap ID, bỏ `__MACOSX`)
+   - `real-frames-300.zip` (300 frame thật: 286 frame chính là ảnh có nhãn ở trên, chỉ 14 frame chưa có nhãn)
+   - `hailo-calib-frames.zip`, `debug-images.zip`
+   - 10 video kết quả khác nhau: `output_{2,3,7,8}`, `final_flight_result{,_new}`, `ket_qua`,
+     `result-v0`, `result_new-v0`, `result_new-v1`
+3. **Chỉ giữ local:** PDF thể lệ, `Thể lệ_dịch.docx`, `node_feedback.docx`, `node_split_deploy.docx`
+   → `docs/private/` (gitignore).
 4. **Thay thế dần:** mỗi module mới của `uav_core` hoặc `ml` thay một phần của `legacy/`. Hết M1,
    `legacy/vision/mission.py` và `legacy/ros2/` bị xoá; hết M3, các script ML trong legacy bị xoá.
    Lịch sử git là bằng chứng của quá trình nâng cấp.
-5. **Dọn `~/Documents`** (mốc M0, cần chủ dự án duyệt danh sách): chuyển vào **Thùng rác**, không xoá
-   vĩnh viễn, sau khi so sha256 với bản trong repo/Release:
-   - `.venv` 5.2 GB
-   - `UAV_node_ROS2.zip` 2.8 GB (đã có trên Drive)
-   - các zip trùng, `__MACOSX`, `build/install/log/__pycache__`
+5. **Dọn `~/Documents`** (mốc M0; chủ dự án chọn ngày 2026-10-18): repo là nguồn duy nhất, folder
+   cũ chỉ còn `README.md` (ghi cái gì đã chuyển đi đâu) và `private/` (4 tài liệu riêng, làm bản
+   backup iCloud). Mọi thứ khác chuyển vào **Thùng rác** qua Finder (không xoá vĩnh viễn), **chỉ
+   sau khi** Release đã có đủ asset và `fetch_assets.sh` tải về khớp sha256. Trong đó có:
+   - `.venv` 5.5 GB, `UAV_node_ROS2.zip` 2.9 GB (snapshot code bên trong đã vào git)
+   - các zip/bản sao trùng, `__MACOSX`, `build/install/log/__pycache__`
 
-   Việc này cũng giải phóng đĩa cho image Docker, vì ổ hiện chỉ còn ~33 GB trống.
+   Việc này cũng giải phóng đĩa cho image Docker, vì ổ hiện chỉ còn ~30 GB trống.
 
 ---
 
@@ -315,10 +326,13 @@ sm.reset(); sm.skip_takeoff(); sm.signal_landed(); sm.start_match(t_s)
   1. synthetic procedural (`uav_ml.synth`, từ `dataset.py`)
   2. **render từ Gazebo, tự gán nhãn** từ pose đã biết (thêm vào `uav_sim`)
   3. ảnh thật
-- **Ảnh thật:** gán nhãn thêm 300 frame trong `real_domain_images_new/`. Model hiện tại gợi ý nhãn,
-  sau đó sửa tay trên Roboflow.
+- **Ảnh thật:** hiện có 286 ảnh có nhãn; trong 300 frame của `real-frames-300.zip` chỉ **14 frame**
+  chưa có nhãn (kiểm kê M0). Muốn tăng đáng kể lượng ảnh thật thì phải **quay thêm** video mới,
+  sau đó model hiện tại gợi ý nhãn và sửa tay trên Roboflow.
 - **Chia train/val/test theo phiên quay/video nguồn**, không chia ngẫu nhiên theo frame, để các frame
-  liền nhau gần giống hệt không rơi vào cả train lẫn test. Tập test được **đóng băng**: danh sách
+  liền nhau gần giống hệt không rơi vào cả train lẫn test. Lưu ý: 300 frame hiện có đánh số liên
+  tục `real_frame_0000–0299`, nhiều khả năng từ một hoặc rất ít video; nếu đúng vậy thì chia theo
+  **khối thời gian liền nhau**, không chia theo frame. Tập test được **đóng băng**: danh sách
   file và sha256 commit trong `ml/configs/splits/`.
 - **Chỉ số:** mask mAP50-95, Boundary F1 (2 px), Hausdorff, circularity, độ chính xác phân loại màu.
   Có **bootstrap 95% CI**, vì tập test thật nhỏ.
