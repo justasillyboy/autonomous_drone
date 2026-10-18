@@ -24,8 +24,8 @@ from ultralytics import YOLO
 CONFIG_DEFAULTS = {
     "data":          "data/circle_seg.yaml",
     "imgsz":         640,
-    "model":         "yolo11l-seg.pt",
-    "mask_ratio":    2,
+    "model":         "yolo11n-seg.pt",   # Nano — only size that fits Hailo-8L (13 TOPS)
+    "mask_ratio":    4,    # 4 = Hailo-8L recommended; PCIe bus saturates at 2 on Pi5.
     "overlap_mask":  True,
     "epochs":        150,
     "batch":         16,
@@ -89,18 +89,17 @@ def _make_loss_callback(lambda_boundary: float, lambda_dice: float):
     """
     Return an on_train_start callback that patches the loss BEFORE the first
     epoch runs.
-
-    PREVIOUS BUG: patch_ultralytics_loss() was called after model.train()
-    returned, meaning 150 epochs completed with default loss and the patch
-    was applied to a finished trainer that would never run again.
-
-    FIX: Ultralytics fires 'on_train_start' before the first batch. We hook
-    into that event, which guarantees every epoch uses the patched loss.
     """
     def on_train_start(trainer):
         try:
             from loss import circle_seg_loss
             import torch
+
+            # --- BẢN VÁ LỖI NẰM Ở ĐÂY ---
+            # Ép khởi tạo criterion nếu mô hình chưa tự động làm việc này
+            if not hasattr(trainer.model, 'criterion'):
+                trainer.model.criterion = trainer.model.init_criterion()
+            # ----------------------------
 
             original_loss_fn = trainer.model.criterion
 
@@ -158,7 +157,7 @@ def train(cfg: dict, resume: str | None = None,
     print(f"Loading weights: {weights}")
     model = YOLO(weights)
 
-    # ── Register loss callback BEFORE training starts  (FIX) ─────────────────
+    # ── Register loss callback BEFORE training starts ───────────────────────
     if use_boundary_loss:
         callback = _make_loss_callback(
             lambda_boundary=cfg["lambda_boundary"],
@@ -167,7 +166,7 @@ def train(cfg: dict, resume: str | None = None,
         model.add_callback("on_train_start", callback)
         print("[Loss] Boundary+Dice loss callback registered.")
 
-    # ── Build kwargs — every value has a safe default (FIX) ──────────────────
+    # ── Build kwargs — every value has a safe default ───────────────────────
     train_kwargs = {
         "data":          cfg["data"],
         "epochs":        cfg["epochs"],

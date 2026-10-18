@@ -1,34 +1,38 @@
-from setuptools import find_packages, setup
 import os
 from glob import glob
+
+from setuptools import find_packages, setup
 
 package_name = 'uav_deploy'
 
 setup(
     name=package_name,
     version='0.0.0',
-    # find_packages sẽ tự động tìm thư mục UAV_node và main nếu có __init__.py
+    # find_packages auto-discovers UAV_node/ and main/ (both have __init__.py).
     packages=find_packages(exclude=['test']),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        # Khai báo đường dẫn cho launch files
+        # Launch files
         (os.path.join('share', package_name, 'launch'),
             glob('launch/*.launch.py')),
-        # Khai báo đường dẫn cho config files
+        # Config + calibration artefacts (config.yaml, calibration.npz, hsv_calib.json, ...)
         (os.path.join('share', package_name, 'config'),
-            glob('config/*.yaml')),
+            glob('config/*')),
     ],
     install_requires=[
         'setuptools',
         'ultralytics',
-        'adafruit-circuitpython-bno08x'
+        'opencv-python',
+        'numpy',
+        'pyyaml',
+        'adafruit-circuitpython-bno08x',
     ],
     zip_safe=True,
     maintainer='vandong',
     maintainer_email='vandong@todo.todo',
-    description='UAV ROS2 Python package',
+    description='UAV ROS2 Python deploy package — 5-node split per node_split_deploy.md',
     license='Apache-2.0',
     entry_points={
         'console_scripts': [

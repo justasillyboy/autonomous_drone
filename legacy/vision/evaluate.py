@@ -19,6 +19,8 @@ import numpy as np
 from scipy.spatial.distance import directed_hausdorff
 from ultralytics import YOLO
 
+from dataset import CLASS_NAMES
+
 
 # ---------------------------------------------------------------------------
 # Pixel-level boundary metrics
@@ -96,12 +98,89 @@ def hausdorff_distance(
 
 
 def mask_iou(pred_mask: np.ndarray, gt_mask: np.ndarray) -> float:
-    """Standard intersection-over-union for a single mask pair."""
+    """Standard intersection-over-union for a single binary mask pair."""
     pred_b = pred_mask > 0
     gt_b   = gt_mask   > 0
     inter  = np.logical_and(pred_b, gt_b).sum()
     union  = np.logical_or(pred_b, gt_b).sum()
     return float(inter) / (float(union) + 1e-6)
+
+
+def _load_gt_masks_for_result(r, iou_threshold: float = 0.5) -> list[tuple[np.ndarray, int]]:
+    """
+    Load ground-truth masks from YOLO label files for a given result object.
+
+    For each GT instance, we rasterize the polygon from the .txt label file
+    and then greedily match it to the predicted mask with the highest IoU.
+
+    Returns list of (gt_mask_uint8, matched_pred_idx) where matched_pred_idx
+    is -1 if no prediction was matched above iou_threshold.
+    """
+    import os
+    from pathlib import Path as _Path
+    orig_path = r.path if hasattr(r, "path") else None
+    if orig_path is None:
+        return []
+
+    # Derive label file path robustly using pathlib so it works on Windows
+    # (backslash separators) and on YOLO datasets where 'images' is not the
+    # direct parent — we walk the parts and replace the rightmost 'images'
+    # component with 'labels', then swap the extension to .txt.
+    orig = _Path(orig_path)
+    parts = list(orig.parts)
+    # Find the rightmost path component named 'images'
+    img_idx = None
+    for i in range(len(parts) - 1, -1, -1):
+        if parts[i] == "images":
+            img_idx = i
+            break
+
+    if img_idx is not None:
+        parts[img_idx] = "labels"
+        label_path = str(_Path(*parts).with_suffix(".txt"))
+    else:
+        # Fallback: no 'images' component found — try replacing with os.sep
+        label_path = str(orig.with_suffix(".txt")).replace(
+            f"{os.sep}images{os.sep}", f"{os.sep}labels{os.sep}"
+        )
+
+    if not os.path.isfile(label_path):
+        return []
+
+    h, w = r.orig_shape
+    pairs = []
+
+    with open(label_path) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) < 7:
+                continue
+            cls_id = int(parts[0])
+            # YOLO seg polygon: alternating normalised x,y pairs
+            coords = [float(v) for v in parts[1:]]
+            pts = np.array(coords).reshape(-1, 2)
+            pts[:, 0] *= w
+            pts[:, 1] *= h
+            pts = pts.astype(np.int32)
+
+            gt_mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.fillPoly(gt_mask, [pts], 1)
+
+            # Match to best overlapping prediction
+            best_idx, best_iou = -1, iou_threshold
+            if r.masks is not None:
+                pred_masks_np = (r.masks.data.cpu().numpy() > 0.5).astype(np.uint8)
+                for pi, pm in enumerate(pred_masks_np):
+                    # Resize pred mask from model output size to original frame size
+                    pm_resized = cv2.resize(pm, (w, h), interpolation=cv2.INTER_NEAREST)
+                    iou = mask_iou(pm_resized, gt_mask)
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_idx = pi
+
+            pairs.append((gt_mask, cls_id, best_idx))
+
+    return pairs
 
 
 def circularity_score(pred_mask: np.ndarray) -> float:
@@ -182,21 +261,32 @@ def evaluate_model(
         if r.masks is None:
             continue
 
-        pred_masks = (r.masks.data.cpu().numpy() > 0.5).astype(np.uint8)
-        gt_masks   = r.masks.data.cpu().numpy()  # use when GT available in results
+        pred_masks_np = (r.masks.data.cpu().numpy() > 0.5).astype(np.uint8)
+        h_orig, w_orig = r.orig_shape
 
-        for i, pred in enumerate(pred_masks):
-            cls_id = int(r.boxes.cls[i].item())
+        # Load GT masks from label files and match to predictions
+        gt_pairs = _load_gt_masks_for_result(r, iou_threshold=iou_threshold)
+
+        if not gt_pairs:
+            # No GT available — skip this image for boundary metrics
+            continue
+
+        for gt_mask, cls_id, pred_idx in gt_pairs:
             if cls_id not in per_class:
                 per_class[cls_id] = {"bnd_f1": [], "hd": [], "circ": [], "iou": []}
 
-            # When GT masks are available in the results object (predict on labelled data)
-            gt = (gt_masks[i] > 0.5).astype(np.uint8)
+            if pred_idx >= 0:
+                # Resize pred mask to original resolution for fair comparison
+                pred = cv2.resize(pred_masks_np[pred_idx], (w_orig, h_orig),
+                                  interpolation=cv2.INTER_NEAREST)
+            else:
+                # False negative — no matching prediction; treat as all-zero mask
+                pred = np.zeros((h_orig, w_orig), dtype=np.uint8)
 
-            bnd  = boundary_f1(pred, gt, tolerance_px=tolerance_px)
-            hd   = hausdorff_distance(pred, gt)
+            bnd  = boundary_f1(pred, gt_mask, tolerance_px=tolerance_px)
+            hd   = hausdorff_distance(pred, gt_mask)
             circ = circularity_score(pred)
-            iou  = mask_iou(pred, gt)
+            iou  = mask_iou(pred, gt_mask)
 
             all_bnd_f1.append(bnd["boundary_f1"])
             all_hd.append(hd if hd != float("inf") else 0.0)
@@ -220,7 +310,7 @@ def evaluate_model(
         "mean_iou":         safe_mean(all_iou),
     }
 
-    class_names = {0: "circle", 1: "semicircle", 2: "H_landing"}
+    class_names = {idx: name for idx, name in enumerate(CLASS_NAMES)}
     for cls_id, vals in per_class.items():
         cname = class_names.get(cls_id, f"class_{cls_id}")
         summary[f"{cname}_boundary_f1"] = safe_mean(vals["bnd_f1"])

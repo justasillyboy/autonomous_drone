@@ -15,7 +15,7 @@
 5. [Stage 3 — HSV Colour Calibration (at venue)](#5-stage-3--hsv-colour-calibration-at-venue)
 6. [Stage 4 — Standalone Python Deployment](#6-stage-4--standalone-python-deployment)
 7. [Stage 5 — ROS 2 Node Deployment](#7-stage-5--ros-2-node-deployment)
-8. [Sensor Wiring Reference](#8-sensor-wiring-reference)
+8. [Hardware Wiring & Physical Build](#8-hardware-wiring--physical-build)
 9. [Constants & Tuning Reference](#9-constants--tuning-reference)
 10. [Competition Day Checklist](#10-competition-day-checklist)
 11. [Post-Flight Telemetry Analysis](#11-post-flight-telemetry-analysis)
@@ -553,16 +553,306 @@ Run `logger.py summary()` on the extracted CSV after landing for competition-spe
 
 ---
 
-## 8. Sensor Wiring Reference
+## 8. Hardware Wiring & Physical Build
 
-### Altitude priority ladder
+This section covers the full physical build — motors, ESCs, flight controller ports,
+drop servo, power distribution, and sensor wiring. The Python stack is purely logic;
+none of it works without the wiring below matching exactly.
+
+### 8a. Bill of Materials
+
+| Category | Item | Recommended part | Notes |
+|---|---|---|---|
+| Frame | 450-class X-quad | F450 / Tarot 450 | Large enough for Pi 5 + Hailo HAT + sensor tray |
+| Motors ×4 | 2212 920 kV brushless | EMAX 2213-935 kV or similar | Paired CW/CCW — order 2 of each |
+| Propellers | 10×4.5 (10×45) | 2×CW, 2×CCW matched pair | **Never** fly with un-matched pair |
+| ESCs ×4 | 20–30 A BLHeli_S | 30 A recommended for safety margin | Must support one-shot125 or DShot600 |
+| Flight controller | Pixhawk-class (STM32 H7) | Pixhawk 6C / Cube Orange / Matek H743 | ArduPilot Copter 4.5+ |
+| Companion computer | Raspberry Pi 5 (8 GB) | — | Pi 4 has insufficient PCIe for Hailo HAT+ |
+| AI accelerator | Hailo-8L (13 TOPS) | Official Pi AI Kit (M.2 HAT+) | Uses Pi 5 PCIe Gen3 ×1 |
+| Camera | IMX219 wide angle | Arducam B0179 (160° FOV) | 22-pin FFC, **not** 15-pin Pi 4 cable |
+| Attitude IMU | BNO080 | Adafruit 4754 / CJMCU-080 | I2C `0x4A` |
+| ToF + flow | MTF-01 (MicoAir) | UART to FC SERIAL4 | Provides altitude + optical flow |
+| Drop servo | SG90 or MG90S | Metal gear preferred | 4.8–6 V operating range |
+| Battery | 4S 14.8 V LiPo, 3000 mAh+ | 25 C continuous discharge | XT60 output |
+| PDB | Matek PDB-XT60 w/ BEC | 5V 3A BEC for FC + 12V BEC for camera (unused here) | — |
+| Auxiliary BEC | 5V 5A UBEC | Pololu D24V50F5 | For Pi 5 + Hailo + sensors |
+| Servo BEC | 6V 2A UBEC | Matek Micro BEC 6V | Isolated rail — **do not** tap the FC 5V |
+| Radio | FrSky / Crossfire RX | — | Failsafe to RTL (Return-To-Launch) |
+| Telemetry | SiK 915 MHz radio | On FC TELEM2 | For GCS link only (optional) |
+
+### 8b. Power Architecture
+
+```
+ 4S LiPo 14.8 V (XT60)
+       │
+       ▼
+ ┌──────────────┐
+ │   PDB        │───► ESC1 ──► Motor 1 (front-left,  CCW)
+ │  (XT60 in)   │───► ESC2 ──► Motor 2 (front-right, CW)
+ │              │───► ESC3 ──► Motor 3 (rear-right,  CCW)
+ │              │───► ESC4 ──► Motor 4 (rear-left,   CW)
+ │              │
+ │  PDB BEC     │───► 5 V 3 A ───► Flight Controller (Pixhawk POWER port)
+ │              │
+ │  12 V rail   │── (not used — keep capped)
+ └──────────────┘
+       │
+       ├───► UBEC 5 V 5 A ───► Pi 5 USB-C (+ Hailo HAT + BNO080 + camera)
+       │
+       └───► UBEC 6 V 2 A ───► Drop servo rail (isolated from FC)
+```
+
+**Critical rules:**
+- **Never** power the drop servo from the FC 5 V rail. SG90/MG90S have 400 mA stall inrush
+  that browns out the FC regulator and causes mid-flight reboots.
+- **Never** power the Pi 5 from the PDB BEC. Pi 5 + Hailo draws peak 4 A — the 3 A BEC
+  browns out under inference load.
+- FC power port must be the PDB BEC's dedicated output (with the current sensor inline).
+  Don't back-feed the FC through TELEM1.
+- Common ground everywhere: PDB GND ↔ FC GND ↔ Pi GND ↔ servo GND ↔ sensor GND.
+
+### 8c. Frame & Motor Layout (ArduPilot `FRAME_CLASS=1`, `FRAME_TYPE=1` — Quad X)
+
+```
+                        ▲ Front (arrow on FC board)
+                        │
+            M1 (CCW)            M2 (CW)
+             ●────────────────────●
+              \                  /
+               \    ┌──────┐    /
+                \   │  FC  │   /
+                 \  │      │  /
+                  \ │  +   │ /        + = FC origin (NED)
+                   \│      │/         +X forward, +Y right
+                   ┌┴──────┴┐
+                   │        │
+                   │  Body  │
+                   │        │
+                   └────────┘
+              ●─────────────────────●
+            M4 (CW)             M3 (CCW)
+```
+
+| Motor | Position | Rotation | Prop type | ArduPilot output |
+|---|---|---|---|---|
+| M1 | Front-left  | CCW | 10×4.5 pusher (CCW) | MAIN OUT 1 |
+| M2 | Front-right | CW  | 10×4.5 tractor (CW) | MAIN OUT 2 |
+| M3 | Rear-right  | CCW | 10×4.5 pusher (CCW) | MAIN OUT 3 |
+| M4 | Rear-left   | CW  | 10×4.5 tractor (CW) | MAIN OUT 4 |
+
+**Rotation check:** with props OFF, run ArduPilot "motor test" (Mission Planner → Initial
+Setup → Optional Hardware → Motor Test). Each motor must spin in the direction in the
+table above. If a motor spins the wrong way, swap any two of its three ESC–motor phase
+wires (do **not** swap ESC signal leads).
+
+### 8d. ESC Wiring & Calibration
+
+Each ESC has 5 wires total:
+- **Thick red + black**: battery-side power. Solder to PDB (red → `+`, black → `–`).
+- **Thick 3-wire bundle**: motor-side phase wires (usually black/yellow/blue). Connect
+  to the three motor bullet connectors.
+- **Thin 3-wire bundle (signal)**: white/red/black Futaba-style servo cable.
+  - White = PWM signal → FC MAIN OUT N (see table above).
+  - Red  = 5 V sense. **Cut or clip off** — do not feed 5 V into FC MAIN rail from ESCs
+    (the PDB BEC already powers that rail). Leave only on ESC 1 if you rely on ESC BEC
+    (not recommended for this build).
+  - Black = GND → FC MAIN rail GND (always connected).
+
+**Calibration procedure (all-at-once, props OFF):**
+1. Set `MOT_PWM_MIN = 1000`, `MOT_PWM_MAX = 2000` in ArduPilot.
+2. Disconnect battery.
+3. Hold radio throttle at max (100%).
+4. Plug in battery → ESCs beep max-throttle learned.
+5. Within 3 s, drop throttle to min (0%) → ESCs beep min-throttle learned.
+6. Disconnect, reconnect, run Motor Test — all four should idle smoothly.
+
+### 8e. Flight Controller Port Map (Pixhawk 6C reference)
+
+| FC port | Signal | Destination | ArduPilot parameter |
+|---|---|---|---|
+| POWER1 | 5 V + current sense | PDB BEC output | `BATT_MONITOR = 4` |
+| MAIN OUT 1–4 | Motor PWM | ESC1–ESC4 signal/GND | `SERVO1_FUNCTION = 33` (Motor 1), 34 (M2), 35 (M3), 36 (M4) |
+| AUX OUT 1 (≡ SERVO9) | Drop servo PWM | Servo signal (white wire) | `SERVO9_FUNCTION = 0` (GPIO disabled — driven by `MAV_CMD_DO_SET_SERVO`) + `SERVO9_MIN = 1100`, `SERVO9_MAX = 1900`, `SERVO9_TRIM = 1100` |
+| TELEM1 | UART to companion computer | Pi 5 UART (GPIO14/15) | `SERIAL1_PROTOCOL = 2` (MAVLink 2), `SERIAL1_BAUD = 921` |
+| TELEM2 | UART to GCS radio | SiK 915 MHz | `SERIAL2_PROTOCOL = 2`, `SERIAL2_BAUD = 57` |
+| SERIAL4 / UART4 | UART to MTF-01 | MTF-01 TX/RX | `SERIAL4_PROTOCOL = 1` (Rangefinder — but see §8h) |
+| I2C | (unused for BNO080) | — | BNO080 is on the Pi 5's I2C, **not** the FC |
+| GPS | UART + I2C | External GPS (optional — indoor comp doesn't use GPS lock) | `GPS_TYPE = 1` if used |
+| RC IN | S.Bus / CRSF | Receiver | — |
+
+> **Note on `SERVO9`:** We drive the drop servo via `MAV_CMD_DO_SET_SERVO (183)` from
+> `action_mavros_node`. Setting `SERVO9_FUNCTION = 0` (disabled) leaves the channel
+> under direct MAV command control — the FC won't try to map a flight function to it.
+
+### 8f. Drop Servo Wiring
+
+```
+     ┌─────────────────────┐
+     │  6 V UBEC (2 A)     │───► Red (+6 V)  ──┐
+     │  (from PDB BAT rail)│                    │
+     │                     │───► Black (GND) ──┼──► SG90 / MG90S servo
+     └─────────────────────┘                    │
+                                                │
+     ┌─────────────────────┐                    │
+     │  FC AUX OUT 1       │───► White (PWM) ──┘
+     │  (SERVO9, signal)   │
+     │                     │───► GND ──► common ground (PDB GND)
+     └─────────────────────┘
+```
+
+**PWM mapping** (matches `action_mavros_node.py` defaults):
+- `servo_pwm_idle = 1100` → latch closed (ball held).
+- `servo_pwm_drop = 1900` → latch open (ball released).
+- ArduPilot `SERVO9_REVERSED = 0` by default. If the latch opens at idle and closes at
+  drop, either invert the servo horn linkage or set `SERVO9_REVERSED = 1`.
+
+**Mechanical notes:**
+- Servo horn → stiff pushrod → drop latch pin. Keep pushrod length such that 800 µs of
+  travel (1100→1900) gives at least 15 mm of latch displacement.
+- Mount the servo near the centre of gravity to minimise pitch disturbance on release.
+- Ball container mounted below servo; latch is a single metal pin retracted by the horn.
+
+**Manual servo test (battery connected, props OFF):**
+```bash
+# From the Pi 5, after MAVROS is up:
+ros2 service call /mavros/cmd/command mavros_msgs/srv/CommandLong \
+    "{broadcast: false, command: 183, param1: 9.0, param2: 1900.0}"
+# Verify latch opens. Then return to idle:
+ros2 service call /mavros/cmd/command mavros_msgs/srv/CommandLong \
+    "{broadcast: false, command: 183, param1: 9.0, param2: 1100.0}"
+```
+
+### 8g. Raspberry Pi 5 Connections
+
+```
+         Raspberry Pi 5
+        ┌───────────────────────┐
+        │  USB-C PWR  ◄─── 5 V 5 A UBEC (from PDB BAT)
+        │                       │
+        │  M.2 HAT+   ──── Hailo-8L (PCIe Gen3 ×1)
+        │                       │
+        │  CSI-2 (22 pin) ─── IMX219 (160° FOV)
+        │                       │
+        │  GPIO 3  (SDA1)  ──┐
+        │  GPIO 5  (SCL1)  ──┼── BNO080 breakout (address 0x4A)
+        │  GPIO 1  (3V3)   ──┤
+        │  GPIO 9  (GND)   ──┘
+        │                       │
+        │  GPIO 8  (TX,  UART0) ──► FC TELEM1 RX
+        │  GPIO 10 (RX,  UART0) ◄── FC TELEM1 TX
+        │  GPIO 14 (GND)        ── common GND
+        │                       │
+        └───────────────────────┘
+```
+
+**One-time Pi 5 setup:**
+```bash
+# Enable I2C + UART, disable serial console (so UART0 is free for MAVROS)
+sudo raspi-config nonint do_i2c 0
+sudo raspi-config nonint do_serial_hw 0
+sudo raspi-config nonint do_serial_cons 1
+# Verify:
+ls /dev/i2c-1 /dev/ttyAMA0 /dev/video0
+# Check BNO080 on I2C bus:
+i2cdetect -y 1    # expect 0x4A
+```
+
+**MAVROS launch** (runs as its own node — started **before** our launch file):
+```bash
+ros2 run mavros mavros_node --ros-args \
+    -p fcu_url:=/dev/ttyAMA0:921600 \
+    -p gcs_url:=udp://:14550@
+```
+
+### 8h. MTF-01 (ToF + Optical Flow) to Flight Controller
+
+The MTF-01 publishes rangefinder **and** optical flow over a single UART link using
+MAVLink messages. Wire it directly to the FC (not to the Pi):
+
+| MTF-01 pin | Wire to | ArduPilot param |
+|---|---|---|
+| VCC (5 V) | FC 5 V rail (SERIAL4 has 5 V pin) | — |
+| GND       | Common ground | — |
+| TX        | FC SERIAL4 RX | `SERIAL4_PROTOCOL = 2` (MAVLink 2) |
+| RX        | FC SERIAL4 TX | `SERIAL4_BAUD = 115` |
+
+**ArduPilot parameters:**
+```
+SERIAL4_PROTOCOL = 2        # MAVLink 2 (MTF-01 speaks MAVLink, not raw rangefinder)
+SERIAL4_BAUD     = 115
+RNGFND1_TYPE     = 20       # MAVLink rangefinder driver
+RNGFND1_MIN_CM   = 10
+RNGFND1_MAX_CM   = 800      # MTF-01 effective range
+RNGFND1_ORIENT   = 25       # downward-facing
+FLOW_TYPE        = 5        # MAVLink optical flow
+EK3_SRC1_VELXY   = 5        # use optical flow for horizontal velocity
+EK3_SRC1_POSZ    = 2        # use rangefinder for Z
+```
+
+**Mount orientation:** lens pointing straight down, arrow on the board aligned with
+drone `+X` (forward). Keep clear of prop-wash turbulence — mount at least 5 cm below
+the arm plane.
+
+### 8i. BNO080 to Raspberry Pi 5 (attitude IMU)
+
+```
+BNO080 breakout         Pi 5 GPIO
+ VIN  ───────────────► 3V3 (pin 1)
+ GND  ───────────────► GND (pin 9)
+ SDA  ───────────────► GPIO 2  / SDA1 (pin 3)
+ SCL  ───────────────► GPIO 3  / SCL1 (pin 5)
+ PS0  ── GND  (I2C mode)
+ PS1  ── GND  (I2C mode)
+ RST  ── (optional — pull-up to 3V3)
+ ADDR ── GND  (→ 0x4A)   or  3V3 (→ 0x4B)
+```
+
+- Pull-up resistors: 4.7 kΩ on SDA and SCL to 3V3 (most breakouts include these).
+- Library install on Pi:
+  ```bash
+  sudo apt install i2c-tools
+  pip install adafruit-circuitpython-bno08x
+  ```
+- Mount orientation: board `+X` aligned with drone forward axis; `+Y` right; `+Z` down.
+  If you mount it rotated, rotate the quaternion in `sensor_bridge_node` before publishing
+  (don't fudge the orientation in `mission_control_node`).
+
+### 8j. Camera (IMX219) to Raspberry Pi 5
+
+- Use the **22-pin FFC ribbon** that ships with Pi 5 camera kits. The 15-pin Pi 4 ribbon
+  does not fit the Pi 5's smaller connector.
+- Enable the legacy stack so `cv2.VideoCapture(0)` works:
+  ```bash
+  # /boot/firmware/config.txt  → add line:
+  dtoverlay=imx219
+  camera_auto_detect=0
+  ```
+- Verify: `v4l2-ctl --list-devices` → `/dev/video0` present.
+- Pre-flight AWB/AEC lock (done automatically by `camera_node`, but test manually):
+  ```bash
+  v4l2-ctl -d /dev/video0 --set-ctrl=white_balance_auto_preset=0
+  v4l2-ctl -d /dev/video0 --set-ctrl=exposure_auto=1
+  ```
+
+### 8k. Cable Routing & EMI
+
+- Keep ESC signal wires **away** from the Pi 5 UART cable — long parallel runs pick up
+  high-frequency PWM noise that corrupts MAVLink.
+- Keep the camera ribbon away from ESC phase wires (thick 3-wire bundle). Motor phase
+  EMI will stripe the image.
+- Shield the BNO080 from the PDB and ESCs. Mount it on top of the Pi 5 (far from PDB),
+  not adjacent to the power distribution plate.
+- Zip-tie every cable. A loose wire contacting a spinning prop ends the flight.
+
+### 8l. Altitude priority ladder (software → hardware mapping)
 
 ```
 fc_altitude  (MAVLink GLOBAL_POSITION_INT)   ← always prefer
     ↓ if None
-tof_altitude_m  (MTF-01 laser rangefinder)
+tof_altitude_m  (MTF-01 via /mavros/rangefinder/…)
     ↓ if None
-z_est_vision  (f_px × D_real / d_px)         ← fallback only — DO NOT use on competition drone
+z_est_vision  (f_px × D_real / d_px)         ← fallback only — DO NOT rely on in competition
 ```
 
 > **Never promote vision-estimated altitude** above a hardware sensor. Vision altitude is
@@ -572,24 +862,7 @@ z_est_vision  (f_px × D_real / d_px)         ← fallback only — DO NOT use o
 > The HUD shows `[FC]`, `[TOF]`, or `[VIS]` as the altitude source.
 > **If the HUD shows `[VIS]` during flight, stop and investigate.**
 
-### MTF-01 (ToF laser + optical flow)
-
-| Signal | Connection | MAVLink topic |
-|---|---|---|
-| `tof_altitude_m` | ArduPilot SERIAL_PROTOCOL=1 | `/mavros/distance_sensor/rangefinder_sub` |
-| `of_vx_ms`, `of_vy_ms` | Same UART port | `/mavros/local_position/velocity_body` |
-
-### BNO080 (attitude IMU)
-
-| Signal | Connection | Used for |
-|---|---|---|
-| `pitch_deg`, `roll_deg` | I2C `0x4A` or UART | Attitude drop gate (< 8°) |
-| `pitch_rate_dps`, `roll_rate_dps` | Same | Finals F2 feedforward suppression guard |
-| `yaw_deg` | Same (full quaternion) | Geofence world-frame velocity rotation |
-
-Library: `adafruit-circuitpython-bno08x`
-
-### SensorData fields summary
+### 8m. SensorData fields summary (software interface)
 
 ```python
 from mission import SensorData
@@ -610,6 +883,26 @@ SensorData(
 
 All fields default to `None` — the state machine degrades gracefully when a sensor is absent,
 but degraded operation does not meet competition requirements.
+
+### 8n. Pre-Flight Hardware Safety Checks (do not skip)
+
+```
+□ Battery fully charged: 16.8 V (4.2 V/cell × 4) — no cell < 4.15 V
+□ Props REMOVED before any ground test
+□ All four motors spin in correct direction via Mission Planner Motor Test
+□ Radio failsafe: disconnect TX → FC enters RTL / LAND (verify in Mission Planner
+  HUD; ArduPilot param FS_THR_ENABLE = 1)
+□ Low-battery failsafe: BATT_FS_LOW_ACT = 2 (RTL), BATT_LOW_VOLT = 14.4 V
+□ Drop servo manual test (battery on, props off): /mavros/cmd/command 183 9 1900
+  → latch opens; return to 1100 → latch closes
+□ GUIDED mode entry from GCS: rc_override drops, FC accepts MAVROS setpoints
+□ ROS 2 e-stop test: ros2 service call /mission/e_stop std_srvs/srv/Trigger
+  → /mission/flight_command publishes (0, 0, 0, 0, drop=false) within 100 ms
+□ Camera feed visible: rqt_image_view /camera/image_raw
+□ IMU attitude updates: ros2 topic hz /bno080/imu → ≥ 95 Hz steady
+□ ToF altitude live: ros2 topic echo /mavros/distance_sensor/rangefinder_sub
+□ No loose wires; all zip-tied; no cable in prop disc arc
+```
 
 ---
 

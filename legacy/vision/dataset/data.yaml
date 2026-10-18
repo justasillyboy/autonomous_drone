@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 3
+names: ['circle', 'semicircle', 'H_landing']
+
+roboflow:
+  workspace: minhs-workspace-ypjpl
+  project: minhs-workspace-ypjpl
+  version: dataset
+  license: Private
+  url: https://app.roboflow.com/minhs-workspace-ypjpl/minhs-workspace-ypjpl/dataset

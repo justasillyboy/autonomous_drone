@@ -7,7 +7,7 @@ Three composable components:
   3. circle_seg_loss — weighted combination of all three (BCE + boundary + Dice).
 
 Usage (monkey-patch or subclass the Ultralytics trainer):
-    from loss import circle_seg_loss
+    from loss import add_circle_loss_callback
 """
 
 import torch
@@ -45,14 +45,6 @@ def boundary_loss(
     Boundary pixels are detected via a Laplacian of the GT mask — this
     produces a thin 1-pixel ring along every circular edge, exactly
     where standard BCE under-penalises errors.
-
-    Args:
-        pred_mask       : Float tensor [B, H, W] in [0, 1] (sigmoid output).
-        gt_mask         : Binary float tensor [B, H, W].
-        boundary_weight : Additional weight multiplier on boundary pixels (default 5×).
-
-    Returns:
-        Scalar loss tensor.
     """
     lap = _get_laplacian(pred_mask.device)
 
@@ -75,17 +67,6 @@ def dice_loss(
     """
     Soft Dice loss — particularly effective for circular regions because
     it optimises the overlap ratio directly rather than per-pixel accuracy.
-
-    Handles class imbalance naturally (useful when small circles occupy
-    few pixels relative to background).
-
-    Args:
-        pred_mask : Float tensor [B, H, W] in [0, 1].
-        gt_mask   : Binary float tensor [B, H, W].
-        smooth    : Laplace smoothing term to avoid division by zero.
-
-    Returns:
-        Scalar loss in [0, 1].
     """
     pred_flat   = pred_mask.reshape(-1)
     target_flat = gt_mask.reshape(-1).float()
@@ -104,19 +85,6 @@ def focal_loss(
 ) -> torch.Tensor:
     """
     Focal loss — optional replacement for standard BCE.
-
-    Down-weights easy background pixels and focuses training on hard
-    boundary examples. Useful when the dataset has many easy cases
-    (large solid circles) and few hard ones (partial occlusions, semi-circles).
-
-    Args:
-        pred_mask : Float tensor [B, H, W] in [0, 1].
-        gt_mask   : Binary float tensor [B, H, W].
-        alpha     : Weighting factor for positive class.
-        gamma     : Focusing parameter (higher = more focus on hard examples).
-
-    Returns:
-        Scalar loss tensor.
     """
     bce = F.binary_cross_entropy(pred_mask, gt_mask, reduction="none")
     pt  = torch.exp(-bce)  # probability of correct class
@@ -138,20 +106,7 @@ def circle_seg_loss(
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """
     Combined segmentation loss optimised for circular objects.
-
         L = L_bce + λ_b · L_boundary + λ_d · L_dice
-
-    Args:
-        pred_mask       : Float [B, H, W] sigmoid mask predictions.
-        gt_mask         : Binary float [B, H, W] ground-truth masks.
-        lambda_boundary : Weight for boundary component (tuned to ~0.4).
-        lambda_dice     : Weight for Dice component (tuned to ~0.3).
-        use_focal       : Replace base BCE with focal loss.
-        focal_gamma     : Gamma for focal loss (ignored if use_focal=False).
-
-    Returns:
-        total_loss : Scalar tensor (backprop-ready).
-        components : Dict with individual loss values for logging.
     """
     gt_mask = gt_mask.float()
 
@@ -173,47 +128,46 @@ def circle_seg_loss(
 
 
 # ---------------------------------------------------------------------------
-# Ultralytics trainer hook (optional)
+# Ultralytics trainer hook (Đã cấu trúc lại bằng Callback)
 # ---------------------------------------------------------------------------
 
 def patch_ultralytics_loss(trainer, lambda_boundary: float = 0.4, lambda_dice: float = 0.3):
     """
-    Monkey-patch an Ultralytics SegmentationTrainer to use circle_seg_loss
-    as an auxiliary mask refinement loss on top of the native loss.
-
-    Usage in train.py:
-        from ultralytics import YOLO
-        from loss import patch_ultralytics_loss
-
-        model = YOLO("yolo11m-seg.pt")
-        model.train(...)          # sets up the trainer
-
-        # After first batch, patch:
-        patch_ultralytics_loss(model.trainer)
-
-    Note: This adds the auxiliary loss to the existing Ultralytics mask loss
-    rather than replacing it — preserving the carefully tuned native loss
-    balance while boosting boundary sensitivity.
+    Monkey-patch hàm loss của Ultralytics để thêm auxiliary mask refinement.
     """
+    if not hasattr(trainer.model, 'criterion'):
+        trainer.model.criterion = trainer.model.init_criterion()
+
     original_criterion = trainer.model.criterion
 
     def patched_criterion(preds, batch):
         native_loss, native_items = original_criterion(preds, batch)
 
-        # Extract predicted and GT masks from batch for auxiliary loss
-        # (shape varies by YOLO version; adjust indexing if needed)
-        if hasattr(batch, "masks") and batch.masks is not None:
-            gt_masks   = batch.masks.float()
+        gt_masks = batch.get("masks")
+        if gt_masks is not None:
+            gt_masks = gt_masks.float()
+            
             pred_masks = preds[1][0].sigmoid() if isinstance(preds, tuple) else None
+            
             if pred_masks is not None and pred_masks.shape == gt_masks.shape:
                 aux_loss, _ = circle_seg_loss(
                     pred_masks, gt_masks,
                     lambda_boundary=lambda_boundary,
                     lambda_dice=lambda_dice,
                 )
-                native_loss = native_loss + 0.1 * aux_loss  # 0.1 scale to not overpower
+                native_loss = native_loss + 0.1 * aux_loss 
 
         return native_loss, native_items
 
     trainer.model.criterion = patched_criterion
-    print("circle_seg_loss auxiliary loss patched onto trainer.")
+    print("[Loss] circle_seg_loss auxiliary loss patched onto YOLO11 trainer successfully.")
+
+
+def add_circle_loss_callback(model, lambda_boundary: float = 0.4, lambda_dice: float = 0.3):
+    """
+    Gắn callback để tự động patch loss function ngay tại thời điểm khởi động training.
+    """
+    def on_train_start(trainer):
+        patch_ultralytics_loss(trainer, lambda_boundary, lambda_dice)
+    
+    model.add_callback("on_train_start", on_train_start)
