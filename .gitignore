@@ -1,0 +1,36 @@
+# Binary assets live in the GitHub Release `legacy-assets-v0`; fetch them with
+# scripts/fetch_assets.sh. Only the checksum manifest is tracked.
+/assets/*
+!/assets/SHA256SUMS
+*.pt
+*.onnx
+*.hef
+*.mp4
+*.zip
+*.npz
+
+# Private material (competition rulebook, internal docx) — never published
+docs/private/
+
+# Data and training outputs
+data/
+runs/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ROS 2 / colcon
+build/
+install/
+log/
+
+# OS / editor
+.DS_Store
+__MACOSX/
