@@ -24,8 +24,8 @@ from ultralytics import YOLO
 CONFIG_DEFAULTS = {
     "data":          "data/circle_seg.yaml",
     "imgsz":         640,
-    "model":         "yolo11n-seg.pt",   # Nano — only size that fits Hailo-8L (13 TOPS)
-    "mask_ratio":    4,    # 4 = Hailo-8L recommended; PCIe bus saturates at 2 on Pi5.
+    "model":         "yolo11l-seg.pt",
+    "mask_ratio":    2,
     "overlap_mask":  True,
     "epochs":        150,
     "batch":         16,

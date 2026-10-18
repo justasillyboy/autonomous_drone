@@ -2,7 +2,7 @@
 
 Autonomous instance segmentation for **UAV Fire-Fighting & Rescue** competition
 (Rulebook: Bo_Luat_UAV_Cuu_Hoa_Cuu_Ho_27_02_2026).
-Hardware target: Raspberry Pi 5 + Hailo-8L (13 TOPS) + IMX219 wide-angle camera.
+Hardware target: Raspberry Pi 5 + Hailo-8 (26 TOPS) + IMX219 wide-angle camera.
 
 ---
 

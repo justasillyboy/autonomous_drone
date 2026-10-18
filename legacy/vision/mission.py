@@ -34,6 +34,7 @@ Integration with test_video.py:
 from __future__ import annotations
 
 import time
+from collections import deque
 import cv2
 import numpy as np
 from dataclasses import dataclass, field
@@ -201,6 +202,80 @@ class FlightCommand:
                 f"v=({self.vx:+.2f},{self.vy:+.2f},{self.vz:+.2f}) m/s | "
                 f"yaw_rate={self.yaw_rate:+.1f} deg/s | "
                 f"yaw_lock={self.yaw_lock} | drop={self.drop_ball}")
+
+
+# ---------------------------------------------------------------------------
+# SensorData — unified input from MTF-01 + BNO080
+#
+# Populate this once per frame in your MAVLink/I2C loop and pass it to
+# MissionStateMachine.update().  All fields are optional (None = not available).
+#
+# Wiring guide:
+#   MTF-01  → ArduPilot serial port, SERIAL_PROTOCOL=1 (MAVLink).
+#             ArduPilot then re-broadcasts DISTANCE_SENSOR and OPTICAL_FLOW_RAD
+#             over the companion-computer telemetry stream (SERIAL2 etc.).
+#             Read with pymavlink:
+#               msg = conn.recv_match(type='DISTANCE_SENSOR', blocking=False)
+#               tof_alt = msg.current_distance / 100.0  # cm → m
+#               msg = conn.recv_match(type='OPTICAL_FLOW_RAD', blocking=False)
+#               flow_vx = msg.integrated_x / msg.integration_time_us * 1e6  # rad/s
+#               # Convert rad/s → m/s: v = angular_rate * altitude
+#               of_vx_ms = flow_vx * tof_alt
+#
+#   BNO080  → I2C (address 0x4A default) or UART.
+#             Use Adafruit CircuitPython BNO08x library:
+#               from adafruit_bno08x import BNO_REPORT_GAME_ROTATION_VECTOR, \
+#                                          BNO_REPORT_GYROSCOPE
+#               pitch, roll, yaw = euler_from_quaternion(bno.game_quaternion)
+#               gx, gy, gz = bno.gyro  # rad/s body frame
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SensorData:
+    """
+    Per-frame sensor readings from MTF-01 and BNO080.
+    All fields are optional — None means sensor not connected or data not fresh.
+    """
+    # ── MTF-01 Time-of-Flight laser rangefinder ────────────────────────────
+    # Direct laser ranging to the floor.  More accurate than barometer at
+    # 3–5 m, immune to air-pressure transients during forward flight.
+    # Priority order for altitude: fc_altitude > tof_altitude > Z_est_vision
+    tof_altitude_m: float | None = None    # metres above floor, ±1 cm accuracy
+
+    # ── MTF-01 Optical flow ────────────────────────────────────────────────
+    # Body-frame drone velocity in m/s (NOT the target velocity).
+    # Used to remove drone-motion contribution from the pixel history so that
+    # _feedforward_velocity() estimates pure TARGET motion only.
+    of_vx_ms: float | None = None    # forward  (body X)
+    of_vy_ms: float | None = None    # lateral  (body Y)
+
+    # ── BNO080 attitude (euler angles, degrees) ────────────────────────────
+    pitch_deg: float | None = None   # nose up = positive
+    roll_deg:  float | None = None   # right wing down = positive
+    yaw_deg:   float | None = None   # clockwise from north = positive
+
+    # ── BNO080 angular velocity (deg/s, body frame) ────────────────────────
+    # Used to detect active maneuvering for feedforward guard — more reliable
+    # than using cmd_vx/vy as a proxy because it measures ACTUAL drone motion,
+    # not just our intended command.
+    pitch_rate_dps: float | None = None   # deg/s pitch rate
+    roll_rate_dps:  float | None = None   # deg/s roll rate
+
+
+# ---------------------------------------------------------------------------
+# Attitude-gated drop thresholds  (BNO080)
+# ---------------------------------------------------------------------------
+
+# Maximum tilt allowed when releasing a ball.
+# At 8° pitch, a ball released at 3.5 m altitude lands ~49 cm off-centre —
+# already close to the edge of the 50 cm radius F5 blue circle.
+# At 12° the miss distance grows to ~74 cm — outside any target.
+DROP_MAX_PITCH_DEG = 8.0   # degrees — refuse drop if |pitch| > this
+DROP_MAX_ROLL_DEG  = 8.0   # degrees — refuse drop if |roll|  > this
+
+# Feedforward guard: actual angular rate threshold (BNO080) for suppressing
+# feedforward.  Replaces the cmd_vx > 0.35 m/s proxy.
+FF_ANGULAR_RATE_GATE_DPS = 12.0  # deg/s — above this the camera is tilting too fast
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +676,14 @@ class MissionStateMachine:
         self._pid_x = PIDController(kp=kp, ki=ki, kd=kd)
         self._pid_y = PIDController(kp=kp, ki=ki, kd=kd)
 
+        # Separate PID for helipad approach — slower, more conservative gains.
+        # The helipad is larger and slower-moving than fire targets, so we
+        # prioritise precision over speed: lower kp prevents overshoot near
+        # landing, higher ki eliminates the steady-state hover offset that
+        # P-only control leaves behind.
+        self._pid_hx = PIDController(kp=0.35, ki=0.03, kd=0.10, output_limit=100.0)
+        self._pid_hy = PIDController(kp=0.35, ki=0.03, kd=0.10, output_limit=100.0)
+
         # Temporal smoothing — lower alpha in Finals to reduce phase lag on F2.
         # alpha=0.4 is good for static targets; alpha=0.15 reacts faster to
         # F2's 10 cm/s movement without introducing too much noise.
@@ -614,24 +697,31 @@ class MissionStateMachine:
 
         # Position history for feedforward velocity estimation (F2 tracking).
         # deque(maxlen) auto-discards oldest entries in O(1) vs list.pop(0) O(n).
-        from collections import deque as _deque
-        self._pos_history: _deque = _deque(maxlen=8)  # 8 = _ff_history_len
+        self._pos_history: deque = deque(maxlen=8)  # 8 = _ff_history_len
         self._ff_history_len = 8   # frames of history for velocity estimate
 
         # No-detection fallback
         self._no_detect_frames = 0
+        # _max_no_detect: frames before entering RECOVERY / helipad scan.
+        # 0.33 s at 30 fps = 10 frames; recalculated in update() when fps_hint changes.
         self._max_no_detect    = 10
 
         # Recovery / scan state
-        self._recovery_frames   = 0
-        self._recovery_max      = 90          # ~3 s at 30 fps before giving up
-        self._scan_step         = 0           # which step in the yaw-scan sequence
-        self._scan_yaw_steps    = [30, -60, 30, 0]   # deg/s per step (clockwise sweep)
-        self._scan_step_frames  = 20          # frames per scan step
+        self._recovery_frames  = 0
+        # _recovery_max: 3 s of scan before giving up on a target.
+        self._recovery_max     = 90          # recalculated in update()
+        self._scan_step        = 0           # which step in the yaw-scan sequence (unused counter, kept for compat)
+        self._scan_yaw_steps   = [30, -60, 30, 0]   # deg/s per step (clockwise sweep)
+        # _scan_step_frames: duration of each yaw step.  0.67 s at 30 fps = 20 frames.
+        self._scan_step_frames = 20          # recalculated in update()
 
         # Structured command output — read this in your MAVLink integration
         self.last_command: FlightCommand = FlightCommand(phase="TAKEOFF",
                                                           action="ASCEND")
+
+        # Most recently resolved altitude authority (set in update(), read by phases)
+        self._last_alt_authority: float | None = None
+        self._last_alt_source: str = "VIS"
 
     # ── Properties ───────────────────────────────────────────────────────────
 
@@ -645,6 +735,24 @@ class MissionStateMachine:
     @property
     def mission_complete(self):
         return self.phase == Phase.COMPLETE
+
+    def _refresh_fps_thresholds(self) -> None:
+        """
+        Recompute all frame-count thresholds from _fps_hint.
+
+        Called at the start of update() so that any change to _fps_hint
+        (e.g. set by test_video.py after reading cap.get(FPS)) takes effect
+        immediately without requiring a restart.
+
+        Time targets:
+          _max_no_detect    : 0.33 s  → 10 fr @ 30 fps, 7 fr @ 20 fps
+          _recovery_max     : 3.0  s  → 90 fr @ 30 fps, 60 fr @ 20 fps
+          _scan_step_frames : 0.67 s  → 20 fr @ 30 fps, 13 fr @ 20 fps
+        """
+        fps = max(self._fps_hint, 1.0)
+        self._max_no_detect    = max(3,  int(0.33 * fps))
+        self._recovery_max     = max(10, int(3.00 * fps))
+        self._scan_step_frames = max(5,  int(0.67 * fps))
 
     # ── Temporal smoothing helper ─────────────────────────────────────────────
 
@@ -667,20 +775,16 @@ class MissionStateMachine:
 
         return int(self._smooth_cx), int(self._smooth_cy), self._smooth_ratio
 
-    def _feedforward_velocity(self) -> tuple[float, float]:
+    def _feedforward_velocity(self, sensor_data: "SensorData | None" = None) -> tuple[float, float]:
         """
-        Estimate target pixel velocity from smoothed position history using
-        least-squares linear regression and return a (ff_vx, ff_vy) feedforward
-        offset in pixel/s.
+        Estimate TARGET pixel velocity from smoothed position history using
+        least-squares linear regression.
 
-        Used to pre-compensate for moving F2 — the PID reacts to the current
-        error, the feedforward anticipates where F2 is heading.
+        With MTF-01 optical flow available, drone motion is subtracted from the
+        raw pixel history before fitting, so the result reflects true target
+        motion (Finals F2) rather than the mixture of target + drone motion.
 
-        Linear regression (polyfit) is used instead of simple endpoint difference
-        because it is robust against noisy first/last samples: a single detection
-        jitter at the beginning or end of the window cannot corrupt the estimate.
-
-        Returns (0.0, 0.0) when history is insufficient or target is static.
+        Without optical flow the behaviour is unchanged from before.
         """
         if len(self._pos_history) < 4:
             return 0.0, 0.0
@@ -689,19 +793,35 @@ class MissionStateMachine:
         ys  = np.array([p[1] for p in self._pos_history])
         ts  = np.array([p[2] for p in self._pos_history])
 
-        # Normalise timestamps to avoid numerical issues in polyfit
+        # ── Optical-flow correction (MTF-01) ──────────────────────────────────
+        # Drone moving forward at v m/s projects as a pixel shift of
+        #   v * f_px / Z  pixels/s  in the image.
+        # Subtracting this from the position history isolates target motion.
+        # f_px is from AltitudeEstimator; Z is the most recent smoothed ratio.
+        if (sensor_data is not None
+                and sensor_data.of_vx_ms is not None
+                and sensor_data.of_vy_ms is not None):
+            Z_ref = self.alt_est.f_px / max(self._smooth_ratio or DROP_ALTITUDE_TARGET, 0.1)
+            # Projected pixel velocity due to drone motion (pixels/s)
+            drone_px_vx = sensor_data.of_vx_ms * self.alt_est.f_px / max(Z_ref, 0.5)
+            drone_px_vy = sensor_data.of_vy_ms * self.alt_est.f_px / max(Z_ref, 0.5)
+            # Remove drone-motion trend from position history
+            # (approximate: subtract linear drift over the history window)
+            dt_arr = ts - ts[0]
+            xs = xs - drone_px_vx * dt_arr
+            ys = ys - drone_px_vy * dt_arr
+
+        # Normalise timestamps
         t0  = ts[0]
-        ts  = ts - t0
-        dt_total = ts[-1]
-        if dt_total < 1e-4:
+        ts_n = ts - t0
+        if ts_n[-1] < 1e-4:
             return 0.0, 0.0
 
         # Least-squares slope = velocity in px/s
-        vx_px = float(np.polyfit(ts, xs, 1)[0])
-        vy_px = float(np.polyfit(ts, ys, 1)[0])
+        vx_px = float(np.polyfit(ts_n, xs, 1)[0])
+        vy_px = float(np.polyfit(ts_n, ys, 1)[0])
 
-        # Cap feedforward to avoid over-shooting on noisy single-frame spikes
-        MAX_FF_PX_S = 60.0   # ~2 px/frame at 30fps — tunable
+        MAX_FF_PX_S = 60.0
         vx_px = float(np.clip(vx_px, -MAX_FF_PX_S, MAX_FF_PX_S))
         vy_px = float(np.clip(vy_px, -MAX_FF_PX_S, MAX_FF_PX_S))
         return vx_px, vy_px
@@ -709,47 +829,78 @@ class MissionStateMachine:
     # ── Main per-frame update ─────────────────────────────────────────────────
 
     def update(self, frame: np.ndarray, yolo_result,
-               current_altitude: float | None = None) -> np.ndarray:
+               current_altitude: float | None = None,
+               sensor_data: "SensorData | None" = None) -> np.ndarray:
         """
         Process one YOLO result and update mission state.
 
         Args:
             frame            : BGR frame (annotated in-place).
             yolo_result      : Single Ultralytics Results object.
-            current_altitude : Altitude in metres from barometer/rangefinder if
-                               available. When None, altitude is estimated from
-                               camera geometry. Provide real sensor data when
-                               wired to your flight controller.
+            current_altitude : Altitude in metres from FC barometer/rangefinder
+                               via MAVLink.  Highest priority if provided.
+            sensor_data      : SensorData from MTF-01 + BNO080.  Used for:
+                                 - tof_altitude_m  : fallback altitude when FC
+                                                     data unavailable
+                                 - of_vx/vy_ms     : optical flow for feedforward
+                                                     target-motion isolation
+                                 - pitch/roll_deg  : tilt-corrected Z_est,
+                                                     level-attitude drop gate
+                                 - pitch/roll_rate : IMU-based feedforward guard
 
         After calling, read mission.last_command for the structured FlightCommand.
+
+        Altitude priority (highest → lowest):
+          1. current_altitude  (FC barometer / rangefinder via MAVLink)
+          2. sensor_data.tof_altitude_m  (MTF-01 ToF laser)
+          3. Z_est  (pinhole vision estimate — tilt-corrected if BNO080 available)
         """
         h, w = frame.shape[:2]
+
+        # Recompute frame-count thresholds in case _fps_hint was updated externally.
+        self._refresh_fps_thresholds()
+
+        # ── Resolve authoritative altitude from priority chain ────────────────
+        # Build once here so all phases use the same resolved value.
+        if current_altitude is not None:
+            _alt_authority = current_altitude
+            _alt_source    = "FC"
+        elif sensor_data is not None and sensor_data.tof_altitude_m is not None:
+            _alt_authority = sensor_data.tof_altitude_m
+            _alt_source    = "TOF"
+        else:
+            _alt_authority = None   # vision Z_est used per-detection below
+            _alt_source    = "VIS"
+        # Store for helipad phase (which doesn't have per-detection Z_est)
+        self._last_alt_authority = _alt_authority
+        self._last_alt_source    = _alt_source
 
         if self._drop_cooldown > 0:
             self._drop_cooldown -= 1
 
         # ── Altitude penalty tracking (§VII — <3.0m >5s in auto = −5pts) ────
-        # Only applies during autonomous flight phases (not TAKEOFF or COMPLETE).
-        # Counts consecutive frames below 3.0m and applies penalty each 5-second window.
+        # Use resolved altitude authority for the penalty check.
+        _penalty_alt = _alt_authority   # None if vision-only
         if (self.phase not in (Phase.TAKEOFF, Phase.COMPLETE)
-                and current_altitude is not None
-                and current_altitude < 3.0):
+                and _penalty_alt is not None
+                and _penalty_alt < 3.0):
             self._low_alt_frames += 1
             penalty_frame_thresh = int(ALT_PENALTY_TIME_S * self._fps_hint)
             if self._low_alt_frames % penalty_frame_thresh == 0:
                 self.penalties += PENALTY_ALTITUDE
-                print(f"[PENALTY] Altitude {current_altitude:.2f}m < 3.0m for "
+                print(f"[PENALTY] Altitude {_penalty_alt:.2f}m < 3.0m for "
                       f"{ALT_PENALTY_TIME_S}s → {PENALTY_ALTITUDE} pts  "
                       f"(total penalties: {self.penalties})")
         else:
-            self._low_alt_frames = 0   # reset on any frame above 3.0m
+            self._low_alt_frames = 0
 
         # ── Phase routing ─────────────────────────────────────────────────────
         if self.phase == Phase.TAKEOFF:
-            frame = self._takeoff_phase(frame, current_altitude, w, h)
+            frame = self._takeoff_phase(frame, _alt_authority, w, h)
 
         elif self.phase in (Phase.SEARCHING, Phase.TARGETING, Phase.DROPPING):
-            frame = self._fire_phase(frame, yolo_result, w, h, current_altitude)
+            frame = self._fire_phase(frame, yolo_result, w, h,
+                                     _alt_authority, _alt_source, sensor_data)
 
         elif self.phase == Phase.RECOVERY:
             frame = self._recovery_phase(frame, yolo_result, w, h)
@@ -795,7 +946,8 @@ class MissionStateMachine:
         else:
             # Gentle ascent command — FC executes, we just report intent
             ascent_vz = -0.8   # m/s upward in NED (negative = up)
-            alt_str   = f"{current_altitude:.2f}m" if current_altitude else "sensor=None"
+            src = getattr(self, '_last_alt_source', 'FC')
+            alt_str = f"{_alt_authority:.2f}m[{src}]" if _alt_authority is not None else "sensor=None"
             self.last_command = FlightCommand(
                 vz=ascent_vz, yaw_lock=True,
                 phase="TAKEOFF", action="ASCEND"
@@ -916,21 +1068,28 @@ class MissionStateMachine:
     # ── Fire-fighting phase logic ─────────────────────────────────────────────
 
     def _fire_phase(self, frame, result, frame_w, frame_h,
-                    current_altitude: float | None = None):
+                    current_altitude: float | None = None,
+                    alt_source: str = "VIS",
+                    sensor_data: "SensorData | None" = None):
         """
-        Altitude authority hierarchy for the drop decision:
+        Altitude authority hierarchy (highest → lowest):
+          1. current_altitude  (FC baro/rangefinder via MAVLink)  ← passed in
+          2. tof_altitude      (MTF-01 ToF laser)                 ← from sensor_data
+          3. Z_est_corrected   (pinhole + BNO080 tilt correction) ← computed here
 
-          1. current_altitude (barometer/rangefinder from MAVLink)  ← AUTHORITATIVE
-          2. Z_est from pinhole model                               ← FALLBACK ONLY
-
-        Why this matters: when the drone pitches to correct position, the camera
-        tilts down.  A circle then projects as an ellipse on the sensor.
-        cv2.minEnclosingCircle fits the major axis → d_px is inflated → Z_est
-        is underestimated → the drop gate could trigger below 3.0 m (penalty).
-
-        If current_altitude is provided, it is used for the altitude_safe check
-        and for the descent vz command.  Z_est is still displayed on the HUD and
-        used for approach decisions when no sensor is connected.
+        Sensor improvements applied:
+          BNO080 pitch/roll → tilt-corrected Z_est: when camera tilts by θ,
+            minEnclosingCircle fits the major axis of the projected ellipse,
+            inflating d_px by 1/cos(θ). Correction: Z_true = Z_est * 1/cos(θ).
+          BNO080 attitude gate → drop refused if |pitch|>8° or |roll|>8°.
+            At 8° pitch, a ball at 3.5m lands ~49cm off-centre — already
+            borderline for the smallest target (F5, r=20cm).
+          BNO080 angular rate → feedforward guard: angular rate > 12°/s means
+            the camera is actively tilting. Replacing the cmd_vx proxy with
+            measured IMU rate is more reliable and has no lag.
+          MTF-01 optical flow → feedforward target isolation: subtract drone
+            motion projected to pixels from the raw pixel-velocity history so
+            _feedforward_velocity() measures TRUE target motion (Finals F2).
         """
         target = self.current_target
         if target is None:
@@ -940,12 +1099,21 @@ class MissionStateMachine:
         target_color, target_label, target_pts, D_real = target
         names = result.names if hasattr(result, 'names') else {}
 
+        # ── Extract sensor values (all optional) ─────────────────────────────
+        pitch_deg = (sensor_data.pitch_deg  if sensor_data else None)
+        roll_deg  = (sensor_data.roll_deg   if sensor_data else None)
+        pitch_rad = np.radians(pitch_deg)   if pitch_deg is not None else 0.0
+        roll_rad  = np.radians(roll_deg)    if roll_deg  is not None else 0.0
+        # Cosine product for tilt correction: clamp to avoid div/0 at extreme angles
+        tilt_cos  = max(np.cos(pitch_rad) * np.cos(roll_rad), 0.1)
+
+        pitch_rate = abs(sensor_data.pitch_rate_dps) if (sensor_data and sensor_data.pitch_rate_dps is not None) else None
+        roll_rate  = abs(sensor_data.roll_rate_dps)  if (sensor_data and sensor_data.roll_rate_dps  is not None) else None
+
         # ── Cross-class NMS prep ─────────────────────────────────────────────
-        # Collect H_landing detections first. Any circle/semicircle whose bbox
-        # overlaps one of these is part of the pad structure, not a fire target.
         h_bboxes = collect_h_landing_bboxes(result, names)
 
-        best_match = None   # (Z_est, cx, cy, radius, color, fr, cnt_frame)
+        best_match = None   # (Z_authority, cx, cy, radius, color, fr, cnt_frame)
 
         if result.masks is not None:
             for mask_obj, box in zip(result.masks.data, result.boxes):
@@ -954,7 +1122,6 @@ class MissionStateMachine:
                 if class_name != "circle":
                     continue
 
-                # Optimized geometry — no full-frame resize
                 geo = _extract_geometry(mask_obj, frame_w, frame_h)
                 if geo is None:
                     continue
@@ -972,11 +1139,6 @@ class MissionStateMachine:
                 if h_bboxes and overlaps_h_landing(cx, cy, radius, h_bboxes):
                     continue
 
-
-                # ── Filter 4: scored-position exclusion ─────────────────
-                # Reject detections that overlap an already-scored circle.
-                # Fixes the F1→F2 re-lock bug: both are red, so color check
-                # passes on F1 even after we've advanced idx to F2.
                 already_scored = any(
                     ((cx - sx) ** 2 + (cy - sy) ** 2) < SCORED_RADIUS_PX ** 2
                     for sx, sy in self._scored_positions
@@ -987,10 +1149,24 @@ class MissionStateMachine:
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (80, 80, 80), 1)
                     continue
 
-                # Altitude estimation (Fix: replaces diameter_ratio >= 0.70)
-                Z_est = self.alt_est.estimate(radius * 2.0, D_real)
+                # ── Altitude resolution with tilt correction ──────────────────
+                # Z_est from pinhole — corrected for camera tilt via BNO080.
+                # When pitch/roll are unavailable tilt_cos = 1.0 (no correction).
+                Z_est_raw       = self.alt_est.estimate(radius * 2.0, D_real)
+                Z_est_corrected = Z_est_raw / tilt_cos   # true altitude estimate
 
-                # Color check using bbox ROI (avoids full-frame resize)
+                # Authoritative altitude: current_altitude > ToF > Z_est_corrected
+                if current_altitude is not None:
+                    Z_authority = current_altitude
+                    z_src = "FC"
+                elif sensor_data is not None and sensor_data.tof_altitude_m is not None:
+                    Z_authority = sensor_data.tof_altitude_m
+                    z_src = "TOF"
+                else:
+                    Z_authority = Z_est_corrected
+                    z_src = "VIS" if tilt_cos == 1.0 else "VIS*"  # * = tilt-corrected
+
+                # Color check
                 x1b = max(0, cx - radius)
                 y1b = max(0, cy - radius)
                 x2b = min(frame_w, cx + radius)
@@ -1010,17 +1186,15 @@ class MissionStateMachine:
                     cv2.drawContours(frame, [cnt_frame], -1, (60, 60, 60), 1)
                     continue
 
-                # Prefer detection closest to optimal drop altitude
                 if (best_match is None or
-                        abs(Z_est - DROP_ALTITUDE_TARGET) <
+                        abs(Z_authority - DROP_ALTITUDE_TARGET) <
                         abs(best_match[0] - DROP_ALTITUDE_TARGET)):
-                    best_match = (Z_est, cx, cy, radius, detected_color, fr,
-                                  cnt_frame)
+                    best_match = (Z_authority, cx, cy, radius, detected_color,
+                                  fr, cnt_frame, z_src, Z_est_corrected)
 
         if best_match is None:
             self._no_detect_frames += 1
             if self._no_detect_frames >= self._max_no_detect:
-                # Lost target too long — start structured scan instead of blind reset
                 self._smooth_cx = self._smooth_cy = self._smooth_ratio = None
                 self._pid_x.reset()
                 self._pid_y.reset()
@@ -1031,10 +1205,6 @@ class MissionStateMachine:
                     yaw_lock=True, phase="FIRE", action="ENTERING_RECOVERY"
                 )
             else:
-                # Target lost for a few frames only — hover in place.
-                # BUG FIX: without this, last_command keeps its previous non-zero
-                # vx/vy, causing the drone to continue drifting toward a target
-                # that may no longer be there.
                 self.last_command = FlightCommand(
                     vx=0.0, vy=0.0, vz=0.0,
                     yaw_lock=True, phase="FIRE",
@@ -1043,8 +1213,8 @@ class MissionStateMachine:
             return frame
 
         self._no_detect_frames = 0
-        Z_est, raw_cx, raw_cy, raw_r, color, fr, cnt_frame = best_match
-        cx, cy, _  = self._smooth(raw_cx, raw_cy, Z_est)
+        Z_authority, raw_cx, raw_cy, raw_r, color, fr, cnt_frame, z_src, Z_est_c = best_match
+        cx, cy, _  = self._smooth(raw_cx, raw_cy, Z_authority)
         radius     = raw_r
         color_bgr  = _color_bgr(color)
 
@@ -1056,86 +1226,111 @@ class MissionStateMachine:
         aligned  = (abs(offset_x) < ALIGN_PIXEL_THRESH and
                     abs(offset_y) < ALIGN_PIXEL_THRESH)
 
-        # ── Altitude authority ────────────────────────────────────────────────
-        # Hardware sensor (rangefinder/barometer) is AUTHORITATIVE when connected.
-        # Vision Z_est is the fallback — it is unreliable during active pitch because
-        # a tilted camera projects circles as ellipses (major axis inflates d_px,
-        # causing Z_est underestimation that could trigger a drop below 3.0 m).
-        Z_authority   = current_altitude if current_altitude is not None else Z_est
         altitude_safe = DROP_ALTITUDE_MIN <= Z_authority <= DROP_ALTITUDE_MAX
 
-        if altitude_safe and aligned and self._drop_cooldown == 0:
+        # ── Attitude-gated drop (BNO080) ──────────────────────────────────────
+        # Ball must fall straight down. Refuse drop if drone is significantly
+        # tilted — the miss distance at 8° pitch, 3.5 m altitude is ~49 cm
+        # (borderline for the 20 cm radius F5 blue circle).
+        attitude_level = True
+        attitude_reason = ""
+        if pitch_deg is not None and abs(pitch_deg) > DROP_MAX_PITCH_DEG:
+            attitude_level  = False
+            attitude_reason = f"pitch={pitch_deg:+.1f}°>{DROP_MAX_PITCH_DEG}°"
+        if roll_deg is not None and abs(roll_deg) > DROP_MAX_ROLL_DEG:
+            attitude_level  = False
+            attitude_reason += f" roll={roll_deg:+.1f}°>{DROP_MAX_ROLL_DEG}°"
+
+        _trigger_drop = (altitude_safe and aligned and
+                         attitude_level and self._drop_cooldown == 0)
+
+        if _trigger_drop:
             self.phase = Phase.DROPPING
             self._execute_drop(target_label, target_pts, Z_authority, cx=cx, cy=cy)
+
+        if _trigger_drop:
+            pass
         elif Z_authority < DROP_ALTITUDE_MIN:
-            self.phase = Phase.TARGETING   # too low — continue controlling while ascending
+            self.phase = Phase.TARGETING
         else:
-            self.phase = Phase.TARGETING   # descending / aligning
+            self.phase = Phase.TARGETING
 
-        # ── Draw ─────────────────────────────────────────────────────────────
-        cv2.drawContours(frame, [cnt_frame], -1, color_bgr, 2)
-        cv2.circle(frame, (cx, cy), 5, color_bgr, -1)
-        cv2.line(frame, (cx - 20, cy), (cx + 20, cy), color_bgr, 1)
-        cv2.line(frame, (cx, cy - 20), (cx, cy + 20), color_bgr, 1)
-
-        fc_x, fc_y = frame_w // 2, frame_h // 2
-        cv2.line(frame, (fc_x-15, fc_y), (fc_x+15, fc_y), (255, 255, 255), 1)
-        cv2.line(frame, (fc_x, fc_y-15), (fc_x, fc_y+15), (255, 255, 255), 1)
-
-        # ── FlightCommand from PID + guarded feedforward ──────────────────────
+        # ── FlightCommand from PID ────────────────────────────────────────────
         cmd_vx = float(np.clip(-vel_y * PX_TO_MS_FIRE, -1.0, 1.0))
         cmd_vy = float(np.clip( vel_x * PX_TO_MS_FIRE, -1.0, 1.0))
-        # NED convention: vz > 0 = descend (down), vz < 0 = ascend (up).
-        # Too HIGH (Z > 4.5m) → descend → +vz.  Too LOW (Z < 3.05m) → ascend → -vz.
         cmd_vz = (0.0   if altitude_safe else
-                   0.6  if Z_authority > DROP_ALTITUDE_MAX else   # too high → descend
-                  -0.5)                                            # too low  → ascend
+                   0.6  if Z_authority > DROP_ALTITUDE_MAX else
+                  -0.5)
 
-        # Feedforward: anticipate moving F2 target (Finals only).
-        # GUARD: suppress feedforward when the drone is actively manoeuvring
-        # (large cmd_vx/vy). In that state, camera tilt causes apparent pixel
-        # movement that is drone-motion, not target-motion. Applying feedforward
-        # on top creates a positive-feedback loop (pitch → pixel shift → more
-        # pitch → more pixel shift → crash). The threshold 0.35 m/s means the
-        # drone is executing a significant correction — at that point we trust
-        # the PID alone and zero the feedforward contribution.
-        FF_ACTIVE_THRESHOLD = 0.35   # m/s — above this, feedforward is unsafe
+        # ── Feedforward with optical-flow target isolation (Finals F2) ────────
+        # Standard feedforward measures apparent pixel velocity, which mixes:
+        #   (a) real target motion  — what we want
+        #   (b) drone motion projected to pixels  — noise we want removed
+        # With MTF-01 optical flow we can subtract (b) from the pixel history
+        # to recover pure target motion before computing the feedforward term.
         if self.is_finals:
-            drone_moving = (abs(cmd_vx) > FF_ACTIVE_THRESHOLD or
-                            abs(cmd_vy) > FF_ACTIVE_THRESHOLD)
-            if not drone_moving:
-                ff_vx_px, ff_vy_px = self._feedforward_velocity()
-                FF_SCALE = 0.003   # px/s → m/s (tune on field)
+            # IMU-based guard: use measured angular rate (BNO080) when available,
+            # fall back to cmd velocity proxy when not.
+            if pitch_rate is not None and roll_rate is not None:
+                drone_maneuvering = (pitch_rate > FF_ANGULAR_RATE_GATE_DPS or
+                                     roll_rate  > FF_ANGULAR_RATE_GATE_DPS)
+            else:
+                # Fallback: cmd velocity proxy (original method)
+                FF_CMD_THRESHOLD = 0.35
+                drone_maneuvering = (abs(cmd_vx) > FF_CMD_THRESHOLD or
+                                     abs(cmd_vy) > FF_CMD_THRESHOLD)
+
+            if not drone_maneuvering:
+                ff_vx_px, ff_vy_px = self._feedforward_velocity(sensor_data)
+                FF_SCALE = 0.003
                 cmd_vx  += float(np.clip(-ff_vy_px * FF_SCALE, -0.4, 0.4))
                 cmd_vy  += float(np.clip( ff_vx_px * FF_SCALE, -0.4, 0.4))
                 cmd_vx   = float(np.clip(cmd_vx, -1.0, 1.0))
                 cmd_vy   = float(np.clip(cmd_vy, -1.0, 1.0))
 
-        action = ("DROP"    if (altitude_safe and aligned) else
-                  "ALIGN"   if altitude_safe else
-                  "DESCEND" if Z_authority > DROP_ALTITUDE_MAX else "ASCEND")
+        if not attitude_level:
+            action = f"WAIT_LEVEL({attitude_reason})"
+        elif _trigger_drop:
+            action = "DROP"
+        elif not altitude_safe:
+            action = "DESCEND" if Z_authority > DROP_ALTITUDE_MAX else "ASCEND"
+        else:
+            action = "ALIGN"
 
         self.last_command = FlightCommand(
             vx=cmd_vx, vy=cmd_vy, vz=cmd_vz,
             yaw_rate=0.0, yaw_lock=True,
-            drop_ball=(self.phase == Phase.DROPPING),
+            drop_ball=_trigger_drop,
             phase="FIRE", action=action,
         )
 
-        # HUD label — show which altitude source is active
-        if current_altitude is not None:
-            alt_str = f"Z={current_altitude:.2f}m[SNS]"   # sensor = authoritative
-        elif Z_est < 99:
-            alt_str = f"Z={Z_est:.2f}m[VIS]"              # vision = fallback
-        else:
-            alt_str = "Z=?"
-        label   = f"{target_label} [{color}] | {alt_str} | fr={fr:.2f} | {action}"
-        label_y = max(20, cy - radius - 12)
+        # ── HUD ───────────────────────────────────────────────────────────────
+        cv2.drawContours(frame, [cnt_frame], -1, color_bgr, 2)
+        cv2.circle(frame, (cx, cy), 5, color_bgr, -1)
+        cv2.line(frame, (cx - 20, cy), (cx + 20, cy), color_bgr, 1)
+        cv2.line(frame, (cx, cy - 20), (cx, cy + 20), color_bgr, 1)
+        fc_x, fc_y = frame_w // 2, frame_h // 2
+        cv2.line(frame, (fc_x-15, fc_y), (fc_x+15, fc_y), (255, 255, 255), 1)
+        cv2.line(frame, (fc_x, fc_y-15), (fc_x, fc_y+15), (255, 255, 255), 1)
+
+        alt_str  = f"Z={Z_authority:.2f}m[{z_src}]"
+        tilt_str = (f" P={pitch_deg:+.1f}°R={roll_deg:+.1f}°"
+                    if pitch_deg is not None else "")
+        label    = (f"{target_label}[{color}] | {alt_str}{tilt_str} | "
+                    f"fr={fr:.2f} | {action}")
+        label_y  = max(20, cy - radius - 12)
         cv2.putText(frame, label, (max(0, cx - 80), label_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_bgr, 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color_bgr, 2)
 
         _draw_altitude_bar(frame, Z_authority, frame_w, frame_h, color_bgr)
+
+        # Attitude warning overlay
+        if not attitude_level:
+            cv2.putText(frame, f"WAIT LEVEL — {attitude_reason}",
+                        (fc_x - 140, fc_y + 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         return frame
+
 
     def _execute_drop(self, label: str, points: int, Z_est: float = 0.0,
                       cx: int = -1, cy: int = -1):
@@ -1165,18 +1360,23 @@ class MissionStateMachine:
         else:
             self.current_target_idx += 1
             self.phase = Phase.SEARCHING
+            # Reset EMA and PID so the next target starts fresh.
+            # Without this, the smoother would initialise from the previous
+            # target's centroid, causing an initial position step on the HUD
+            # and a derivative spike in the PID when the new target appears.
+            self._smooth_cx = self._smooth_cy = self._smooth_ratio = None
+            self._pos_history.clear()
 
 
     def _transition_to_helipad(self):
         print(f"[MISSION] All balls dropped! Score so far: {self.score}")
         print("[MISSION] Switching to FIND_HELIPAD mode...")
         self.phase = Phase.FIND_HELIPAD
-        # BUG FIX: reset the shared counter so helipad phase starts clean.
-        # Without this, any residual no_detect count from the fire phase could
-        # cause the helipad scan to start immediately instead of waiting the
-        # correct _max_no_detect frames.
+        # Reset shared state so helipad phase starts clean.
         self._no_detect_frames = 0
         self._smooth_cx = self._smooth_cy = self._smooth_ratio = None
+        self._pid_hx.reset()
+        self._pid_hy.reset()
 
     # ── Helipad phase logic ───────────────────────────────────────────────────
 
@@ -1201,13 +1401,19 @@ class MissionStateMachine:
                 d_ratio = float(pad_w) / float(frame_w)
                 action  = _decide_action(d_ratio)
 
-                # Helipad approach velocity — proportional to offset from centre
+                # Helipad approach velocity — PID on pixel offset from centre.
+                # P-only control left a steady-state offset (~5-15 px) because
+                # the FC's velocity deadband absorbs small commands.  The integral
+                # term in _pid_hx/_pid_hy eliminates this.
                 pad_offset_x = pad_cx - frame_w // 2
                 pad_offset_y = pad_cy - frame_h // 2
-                # PX_TO_MS_HELIPAD tuned for precise final approach (FC ATC_RAT P=0.135)
-                h_vx = float(np.clip(-pad_offset_y * PX_TO_MS_HELIPAD, -0.5, 0.5))
-                h_vy = float(np.clip( pad_offset_x * PX_TO_MS_HELIPAD, -0.5, 0.5))
-                h_vz = 0.3 if d_ratio < DROP_THRESHOLD else 0.0  # descend
+                h_vel_x = self._pid_hx.update(float(pad_offset_x))
+                h_vel_y = self._pid_hy.update(float(pad_offset_y))
+                h_vx = float(np.clip(-h_vel_y * PX_TO_MS_HELIPAD, -0.5, 0.5))
+                h_vy = float(np.clip( h_vel_x * PX_TO_MS_HELIPAD, -0.5, 0.5))
+                # Descend at 0.3 m/s while approaching; increase to 0.4 m/s
+                # once d_ratio confirms we are directly above the pad.
+                h_vz = 0.3 if d_ratio < DROP_THRESHOLD else 0.4
 
                 if d_ratio >= DROP_THRESHOLD:
                     if self.phase != Phase.LANDING:
@@ -1261,6 +1467,13 @@ class MissionStateMachine:
                             f"yaw={yaw_rate:+.0f} deg/s",
                             (10, frame_h - 60),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 128, 0), 2)
+            else:
+                # Helipad temporarily lost — hover, do not execute last XY command.
+                self.last_command = FlightCommand(
+                    vx=0.0, vy=0.0, vz=0.0,
+                    yaw_lock=True, phase="FIND_HELIPAD",
+                    action=f"NO_DETECT_{self._no_detect_frames}/{self._max_no_detect}",
+                )
         else:
             self._no_detect_frames = 0
 
@@ -1310,6 +1523,10 @@ class MissionStateMachine:
         self._scored_positions.clear()
         self._pid_x.reset()
         self._pid_y.reset()
+        self._pid_hx.reset()
+        self._pid_hy.reset()
+        self._last_alt_authority = None
+        self._last_alt_source    = "VIS"
         self.last_command = FlightCommand(phase="TAKEOFF", action="RETRY_RESET")
         print("[MISSION] RETRY — all scores reset. Return drone to start position.")
 
@@ -1362,8 +1579,9 @@ def draw_mission_hud(frame: np.ndarray, mission: MissionStateMachine) -> np.ndar
     pc = phase_colors.get(mission.phase, (200, 200, 200))
 
     round_tag = "[FINALS]" if mission.is_finals else "[QUAL]"
+    alt_src   = getattr(mission, '_last_alt_source', 'VIS')
     lines = [
-        (f"Phase: {mission.phase.name}  {round_tag}", pc),
+        (f"Phase: {mission.phase.name}  {round_tag}  [{alt_src}]", pc),
         (f"Balls: {mission.balls_dropped}/5  |  Score: {mission.score} pts",
          (200, 200, 200)),
         (f"Penalties: {mission.penalties} pts  "

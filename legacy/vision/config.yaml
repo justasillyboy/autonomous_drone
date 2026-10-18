@@ -32,7 +32,7 @@ model: "yolo11n-seg.pt"
 # Prototype count — key knob for circular edge quality
 # Default = 32 protos.  Set 64 for richer circular basis (requires model YAML edit).
 # See README.md §Model for instructions.
-mask_ratio: 4          # 4 = Hailo-8L recommended. PCIe bus saturates at 2 on Pi5.
+mask_ratio: 2          # lower = higher-res masks (default 4). 2 costs ~20% more VRAM.
 overlap_mask: true     # resolve overlapping circular instances correctly
 
 # ─── TRAINING ──────────────────────────────────────────────────────────────────

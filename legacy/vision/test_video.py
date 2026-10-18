@@ -198,11 +198,6 @@ def main() -> None:
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-    # Inform the mission state machine of the actual pipeline FPS.
-    # This ensures time-based thresholds (altitude penalty, drop cooldown) are
-    # correct regardless of whether the source is 20 fps, 30 fps, or 60 fps.
-    mission._fps_hint = fps
-
     # VideoWriter is created after the first frame so dimensions reflect
     # the post-undistort size (crop=True may reduce width/height slightly).
     out          = None

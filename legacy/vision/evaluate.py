@@ -95,63 +95,7 @@ def hausdorff_distance(
     return round(float(max(d1, d2)), 3)
 
 
-def _load_gt_masks_for_result(r, iou_threshold: float = 0.5) -> list[tuple[np.ndarray, int]]:
-    """
-    Load ground-truth masks from YOLO label files for a given result object.
-
-    For each GT instance, we rasterize the polygon from the .txt label file
-    and then greedily match it to the predicted mask with the highest IoU.
-
-    Returns list of (gt_mask_uint8, matched_pred_idx) where matched_pred_idx
-    is -1 if no prediction was matched above iou_threshold.
-    """
-    import os
-    orig_path = r.path if hasattr(r, "path") else None
-    if orig_path is None:
-        return []
-
-    # Derive label file path: images/train/xxx.jpg → labels/train/xxx.txt
-    orig_path = str(orig_path)
-    label_path = orig_path.replace("/images/", "/labels/").replace(
-        ".jpg", ".txt").replace(".jpeg", ".txt").replace(".png", ".txt")
-
-    if not os.path.isfile(label_path):
-        return []
-
-    h, w = r.orig_shape
-    pairs = []
-
-    with open(label_path) as f:
-        for line in f:
-            parts = line.strip().split()
-            if len(parts) < 7:
-                continue
-            cls_id = int(parts[0])
-            # YOLO seg polygon: alternating normalised x,y pairs
-            coords = [float(v) for v in parts[1:]]
-            pts = np.array(coords).reshape(-1, 2)
-            pts[:, 0] *= w
-            pts[:, 1] *= h
-            pts = pts.astype(np.int32)
-
-            gt_mask = np.zeros((h, w), dtype=np.uint8)
-            cv2.fillPoly(gt_mask, [pts], 1)
-
-            # Match to best overlapping prediction
-            best_idx, best_iou = -1, iou_threshold
-            if r.masks is not None:
-                pred_masks_np = (r.masks.data.cpu().numpy() > 0.5).astype(np.uint8)
-                for pi, pm in enumerate(pred_masks_np):
-                    # Resize pred mask from model output size to original frame size
-                    pm_resized = cv2.resize(pm, (w, h), interpolation=cv2.INTER_NEAREST)
-                    iou = mask_iou(pm_resized, gt_mask)
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_idx = pi
-
-            pairs.append((gt_mask, cls_id, best_idx))
-
-    return pairs
+def mask_iou(pred_mask: np.ndarray, gt_mask: np.ndarray) -> float:
     """Standard intersection-over-union for a single mask pair."""
     pred_b = pred_mask > 0
     gt_b   = gt_mask   > 0
@@ -238,32 +182,21 @@ def evaluate_model(
         if r.masks is None:
             continue
 
-        pred_masks_np = (r.masks.data.cpu().numpy() > 0.5).astype(np.uint8)
-        h_orig, w_orig = r.orig_shape
+        pred_masks = (r.masks.data.cpu().numpy() > 0.5).astype(np.uint8)
+        gt_masks   = r.masks.data.cpu().numpy()  # use when GT available in results
 
-        # Load GT masks from label files and match to predictions
-        gt_pairs = _load_gt_masks_for_result(r, iou_threshold=iou_threshold)
-
-        if not gt_pairs:
-            # No GT available — skip this image for boundary metrics
-            continue
-
-        for gt_mask, cls_id, pred_idx in gt_pairs:
+        for i, pred in enumerate(pred_masks):
+            cls_id = int(r.boxes.cls[i].item())
             if cls_id not in per_class:
                 per_class[cls_id] = {"bnd_f1": [], "hd": [], "circ": [], "iou": []}
 
-            if pred_idx >= 0:
-                # Resize pred mask to original resolution for fair comparison
-                pred = cv2.resize(pred_masks_np[pred_idx], (w_orig, h_orig),
-                                  interpolation=cv2.INTER_NEAREST)
-            else:
-                # False negative — no matching prediction; treat as all-zero mask
-                pred = np.zeros((h_orig, w_orig), dtype=np.uint8)
+            # When GT masks are available in the results object (predict on labelled data)
+            gt = (gt_masks[i] > 0.5).astype(np.uint8)
 
-            bnd  = boundary_f1(pred, gt_mask, tolerance_px=tolerance_px)
-            hd   = hausdorff_distance(pred, gt_mask)
+            bnd  = boundary_f1(pred, gt, tolerance_px=tolerance_px)
+            hd   = hausdorff_distance(pred, gt)
             circ = circularity_score(pred)
-            iou  = mask_iou(pred, gt_mask)
+            iou  = mask_iou(pred, gt)
 
             all_bnd_f1.append(bnd["boundary_f1"])
             all_hd.append(hd if hd != float("inf") else 0.0)

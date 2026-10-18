@@ -205,6 +205,79 @@ def validate_onnx_export(
     return passed
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Export YOLO11-seg circle model")
+    parser.add_argument("--weights",   required=False, default=None,
+                        help="Path to .pt weights (not needed for --extract-calib-frames)")
+    parser.add_argument("--format",    default="onnx",
+                        choices=SUPPORTED_FORMATS + ["all"],
+                        help="Export format (default: onnx)")
+    parser.add_argument("--imgsz",     type=int,   default=640)
+    parser.add_argument("--half",      action="store_true", help="FP16 export")
+    parser.add_argument("--int8",      action="store_true", help="INT8 export (TRT only)")
+    parser.add_argument("--batch",     type=int,   default=1)
+    parser.add_argument("--device",    default="0")
+    parser.add_argument("--benchmark", action="store_true",
+                        help="Run latency benchmark after export")
+    parser.add_argument("--validate",  action="store_true",
+                        help="Validate ONNX output against .pt")
+    # Hailo calibration frame extraction
+    parser.add_argument("--extract-calib-frames", default=None, metavar="SOURCE",
+                        help="Extract real frames for Hailo INT8 calibration. "
+                             "Pass a flight video or image folder.")
+    parser.add_argument("--calib-output", default="hailo_calib",
+                        help="Output dir for calibration frames (default: hailo_calib/)")
+    parser.add_argument("--calib",     default=None,
+                        help="calibration.npz for undistortion during frame extraction")
+    parser.add_argument("--n-calib",   type=int, default=150,
+                        help="Number of calibration frames to extract (default 150)")
+    args = parser.parse_args()
+
+    # ── Hailo calibration extraction (standalone, no weights needed) ──────────
+    if args.extract_calib_frames:
+        extract_hailo_calibration_frames(
+            source=args.extract_calib_frames,
+            output_dir=args.calib_output,
+            n_frames=args.n_calib,
+            imgsz=args.imgsz,
+            calib_path=args.calib,
+        )
+        import sys; sys.exit(0)
+
+    if args.weights is None:
+        print("Error: --weights is required for export. "
+              "Use --extract-calib-frames for calibration frame extraction.")
+        import sys; sys.exit(1)
+
+    formats = SUPPORTED_FORMATS if args.format == "all" else [args.format]
+    exported_paths = []
+
+    for fmt in formats:
+        path = export_model(
+            weights=args.weights,
+            fmt=fmt,
+            imgsz=args.imgsz,
+            half=args.half,
+            int8=args.int8,
+            batch=args.batch,
+            device=args.device,
+        )
+        exported_paths.append((fmt, path))
+
+        if args.benchmark:
+            benchmark(path, fmt, imgsz=args.imgsz)
+
+        if args.validate and fmt == "onnx":
+            validate_onnx_export(args.weights, path, imgsz=args.imgsz)
+
+    print("\nAll exports complete:")
+    for fmt, path in exported_paths:
+        print(f"  {fmt.upper():<10} → {path}")
+
 
 # ---------------------------------------------------------------------------
 # Hailo INT8 calibration frame extractor
@@ -333,76 +406,3 @@ def extract_hailo_calibration_frames(
     print(f"      --calib-set-path {out.resolve()} \\")
     print(f"      --classes 3")
     return str(out)
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Export YOLO11-seg circle model")
-    parser.add_argument("--weights",   required=False, default=None,
-                        help="Path to .pt weights (not needed for --extract-calib-frames)")
-    parser.add_argument("--format",    default="onnx",
-                        choices=SUPPORTED_FORMATS + ["all"],
-                        help="Export format (default: onnx)")
-    parser.add_argument("--imgsz",     type=int,   default=640)
-    parser.add_argument("--half",      action="store_true", help="FP16 export")
-    parser.add_argument("--int8",      action="store_true", help="INT8 export (TRT only)")
-    parser.add_argument("--batch",     type=int,   default=1)
-    parser.add_argument("--device",    default="0")
-    parser.add_argument("--benchmark", action="store_true",
-                        help="Run latency benchmark after export")
-    parser.add_argument("--validate",  action="store_true",
-                        help="Validate ONNX output against .pt")
-    # Hailo calibration frame extraction
-    parser.add_argument("--extract-calib-frames", default=None, metavar="SOURCE",
-                        help="Extract real frames for Hailo INT8 calibration. "
-                             "Pass a flight video or image folder.")
-    parser.add_argument("--calib-output", default="hailo_calib",
-                        help="Output dir for calibration frames (default: hailo_calib/)")
-    parser.add_argument("--calib",     default=None,
-                        help="calibration.npz for undistortion during frame extraction")
-    parser.add_argument("--n-calib",   type=int, default=150,
-                        help="Number of calibration frames to extract (default 150)")
-    args = parser.parse_args()
-
-    # ── Hailo calibration extraction (standalone, no weights needed) ──────────
-    if args.extract_calib_frames:
-        extract_hailo_calibration_frames(
-            source=args.extract_calib_frames,
-            output_dir=args.calib_output,
-            n_frames=args.n_calib,
-            imgsz=args.imgsz,
-            calib_path=args.calib,
-        )
-        import sys; sys.exit(0)
-
-    if args.weights is None:
-        print("Error: --weights is required for export. "
-              "Use --extract-calib-frames for calibration frame extraction.")
-        import sys; sys.exit(1)
-
-    formats = SUPPORTED_FORMATS if args.format == "all" else [args.format]
-    exported_paths = []
-
-    for fmt in formats:
-        path = export_model(
-            weights=args.weights,
-            fmt=fmt,
-            imgsz=args.imgsz,
-            half=args.half,
-            int8=args.int8,
-            batch=args.batch,
-            device=args.device,
-        )
-        exported_paths.append((fmt, path))
-
-        if args.benchmark:
-            benchmark(path, fmt, imgsz=args.imgsz)
-
-        if args.validate and fmt == "onnx":
-            validate_onnx_export(args.weights, path, imgsz=args.imgsz)
-
-    print("\nAll exports complete:")
-    for fmt, path in exported_paths:
-        print(f"  {fmt.upper():<10} → {path}")
