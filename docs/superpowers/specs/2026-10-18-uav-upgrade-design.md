@@ -2,10 +2,10 @@
 
 - **Date:** 2026-10-18
 - **Status:** Approved 2026-10-18
-- **Repo:** `github.com/justasillyboy/autonomous_drone` (local clone: `~/dev/autonomous_drone`)
-- **Legacy code:** imported into `legacy/` (binaries in the `legacy-assets-v0` release); the
-  original `~/Documents/AI/UAV_Competition_NCKH/` folder was reduced to a README and private
-  docs during M0
+- **Repo:** `github.com/justasillyboy/autonomous_drone`; the local working copy **is** the
+  original project folder `~/Documents/AI/UAV_Competition_NCKH/` (owner decision 2026-10-19:
+  all work happens inside that folder)
+- **Legacy code:** imported into `legacy/` (binaries in the `legacy-assets-v0` release)
 
 ---
 
@@ -162,15 +162,19 @@ autonomous_drone/
 4. **Replace gradually:** every new `uav_core` or `ml` module replaces a part of `legacy/`. By the
    end of M1, `legacy/vision/mission.py` and `legacy/ros2/` are deleted; by the end of M3, the
    legacy ML scripts are deleted. The git history documents the upgrade.
-5. **Clean up `~/Documents`** (M0; owner's choice on 2026-10-18): the repo is the single source of
-   truth; the old folder keeps only `README.md` (what moved where) and `private/` (the 4 private
-   documents, as an iCloud backup). Everything else goes to the **Trash** via Finder (never a
-   permanent delete), **only after** the Release holds every asset and `fetch_assets.sh`
-   downloads them with matching sha256. That includes:
+5. **Clean up the project folder** (M0; owner's choices on 2026-10-18/19): the repo is the single
+   source of truth and its working copy is the project folder itself, so the folder contains
+   only tracked files plus gitignored `assets/` and `docs/private/`. The old snapshot folders and
+   loose files go to the **Trash** via Finder (never a permanent delete), **only after** the
+   Release holds every asset and `fetch_assets.sh` downloads them with matching sha256. That
+   includes:
    - the 5.5 GB `.venv`, the 2.9 GB `UAV_node_ROS2.zip` (the code snapshot inside it is in git)
    - duplicate zips/copies, `__MACOSX`, `build/install/log/__pycache__`
 
    This also frees disk space for the Docker images, since the drive has only ~30 GB free.
+   The folder is iCloud-synced: generated directories (virtualenvs, build outputs, Docker
+   contexts) use a `.nosync` name so iCloud skips them, e.g. `.venv` is a symlink to
+   `.venv.nosync`.
 
 ---
 
