@@ -43,7 +43,7 @@ Weights, videos and datasets are attached to the GitHub Release
 | `dataset-real-286.zip` | `fixed_yolo_circle_seg/files/dataset.zip` | 286 real frames with polygon labels (`circle`, `semicircle`, `H_landing`), class IDs already remapped |
 | `real-frames-300.zip` | `yolo_circle_seg/real_domain_images_new/` | 300 real frames; 286 of them are the labelled images above, 14 are unlabelled |
 | `hailo-calib-frames.zip` | `fixed_yolo_circle_seg/files/hailo_calib/` | 286 frames prepared for Hailo INT8 calibration |
-| `debug-images.zip` | `yolo_circle_seg/*.png, *.jpg, *.webp` | Sample and debug images |
+| `debug-images.zip` | `yolo_circle_seg/*.png, *.jpg, *.webp`, `yolo_circle_seg/dataset/` | Sample and debug images, plus one synthetic training sample with its label |
 | `output_{2,3,7,8}.mp4` | project root | Annotated test videos |
 | `result-v0.mp4`, `result_new-v0.mp4`, `ket_qua.mp4`, `final_flight_result{,_new}.mp4` | `yolo_circle_seg/` | Annotated test videos (04-13 era) |
 | `result_new-v1.mp4` | `fixed_yolo_circle_seg/files/` | Annotated test video (04-21 era) |
