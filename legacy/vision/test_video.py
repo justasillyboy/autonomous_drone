@@ -18,7 +18,7 @@ import time
 import cv2
 from ultralytics import YOLO
 
-from mission import MissionStateMachine
+from mission import MissionStateMachine, DEFAULT_F_PX
 from logger  import TelemetryLogger
 
 
@@ -67,9 +67,12 @@ class FrameBuffer:
         if self._thread:
             self._thread.join(timeout=2.0)
 
-    def read(self) -> cv2.typing.MatLike | None:
+    def read(self) -> tuple[cv2.typing.MatLike, float] | None:
         """
         Block until a new frame is available (max 0.5s).
+        Returns (frame, grab_timestamp) where grab_timestamp is
+        time.perf_counter() recorded immediately after cap.read() —
+        use this as frame_timestamp in mission.update() for IMU time-sync.
         Returns None when the stream has ended.
         """
         try:
@@ -80,6 +83,7 @@ class FrameBuffer:
     def _capture_loop(self) -> None:
         while not self._stop_event.is_set():
             ret, frame = self._cap.read()
+            grab_ts = time.perf_counter()   # record grab time immediately after read
             if not ret:
                 self._q.put(None)   # sentinel: stream ended
                 break
@@ -93,7 +97,7 @@ class FrameBuffer:
                     self._q.get_nowait()
                 except queue.Empty:
                     pass
-            self._q.put(frame)
+            self._q.put((frame, grab_ts))
 
 
 # ---------------------------------------------------------------------------
@@ -149,10 +153,34 @@ def main() -> None:
     parser.add_argument("--log",         default=None,
                         help="Path for telemetry CSV (e.g. run_001.csv). "
                              "Omit to skip logging.")
+    parser.add_argument("--hsv-calib",   default=None,
+                        help="HSV calibration JSON produced by hsv_calibrator.py. "
+                             "Run hsv_calibrator.py at the venue before the match "
+                             "to tune colour thresholds under actual lighting.")
+    parser.add_argument("--config-yaml", default=None,
+                        help="Path to config.yaml for on-field constant tuning. "
+                             "Overrides mission.py defaults without editing source. "
+                             "Example: --config-yaml config.yaml")
     args = parser.parse_args()
 
     # ── Model ─────────────────────────────────────────────────────────────────
     model = YOLO(args.weights)
+
+    # ── HSV colour calibration (optional, recommended for competition) ────────
+    # Load tuned colour thresholds produced by hsv_calibrator.py.
+    # Do this before any inference starts so every frame uses the field-tuned
+    # ranges, not the hardcoded defaults in mission.py.
+    if args.config_yaml:
+        from mission import load_mission_config_yaml
+        load_mission_config_yaml(args.config_yaml)
+
+    if args.hsv_calib:
+        from mission import load_hsv_calibration
+        try:
+            load_hsv_calibration(args.hsv_calib)
+            print(f"[HSV] Colour calibration loaded from {args.hsv_calib}")
+        except (FileNotFoundError, ValueError, KeyError) as e:
+            print(f"[HSV] WARNING: could not load {args.hsv_calib}: {e} — using built-in defaults")
 
     # ── Undistortion + focal length ───────────────────────────────────────────
     undist = None
@@ -172,7 +200,7 @@ def main() -> None:
     # ── Mission state machine ──────────────────────────────────────────────────
     mission = MissionStateMachine(
         smoothing_alpha=args.smooth,
-        f_px=f_px if f_px is not None else 500.0,
+        f_px=f_px if f_px is not None else DEFAULT_F_PX,
         is_finals=args.finals,
         takeoff_alt=args.takeoff_alt,
     )
@@ -198,6 +226,11 @@ def main() -> None:
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
+    # Inform the mission state machine of the actual pipeline FPS.
+    # This ensures time-based thresholds (altitude penalty, drop cooldown) are
+    # correct regardless of whether the source is 20 fps, 30 fps, or 60 fps.
+    mission.fps_hint = fps
+
     # VideoWriter is created after the first frame so dimensions reflect
     # the post-undistort size (crop=True may reduce width/height slightly).
     out          = None
@@ -210,6 +243,15 @@ def main() -> None:
     if args.skip_frames:
         print(f"Frame-skip: processing 1 in every {args.skip_frames + 1} frames")
 
+    # ── Sensor stub warning ───────────────────────────────────────────────────
+    # These stubs are safe for offline video testing but MUST be wired to real
+    # hardware before competition flight.  The warnings below make a misconfigured
+    # deployment immediately visible in the log.
+    print("[WARN] fc_alt stub active — altitude priority ladder will fall back to "
+          "vision-only (Z_est). Wire mavlink_conn.altitude_m() before competition flight.")
+    print("[WARN] sensor_data stub active — attitude gate, ToF block, geofence, and "
+          "Finals feedforward are all inactive. Wire SensorData before competition flight.")
+
     # ── Threaded frame capture ────────────────────────────────────────────────
     # FrameBuffer reads + undistorts in a background thread so the inference
     # thread is never blocked waiting on camera I/O or CPU undistortion.
@@ -219,9 +261,10 @@ def main() -> None:
     last_frame = None
 
     while True:
-        frame = frame_buf.read()
-        if frame is None:
+        result_buf = frame_buf.read()
+        if result_buf is None:
             break   # stream ended
+        frame, grab_ts = result_buf
 
         # Lazy VideoWriter: created on first frame so size reflects actual
         # post-undistort dimensions (crop=True may reduce width/height).
@@ -249,10 +292,27 @@ def main() -> None:
         result = results[0]
 
         # Mission update
-        # Pass real altitude when wired to FC:
-        #   alt = mavlink_conn.altitude_m()
-        #   frame = mission.update(frame, result, current_altitude=alt)
-        frame = mission.update(frame, result, current_altitude=None)
+        # ── COMPETITION WIRING (must complete before first flight) ─────────────
+        # Replace the stubs below with real sensor reads.  All fields default to
+        # None so the state machine degrades gracefully in offline video testing,
+        # but on the drone you MUST provide at minimum fc_alt + tof + IMU data.
+        #
+        # from mission import SensorData
+        # fc_alt = mavlink_conn.altitude_m()          # MAVLink GLOBAL_POSITION_INT
+        # sensors = SensorData(
+        #     tof_altitude_m  = tof_sensor.read_m(),  # MTF-01 rangefinder
+        #     of_vx_ms        = flow.vx_ms(),         # MTF-01 optical flow
+        #     of_vy_ms        = flow.vy_ms(),
+        #     pitch_deg       = imu.pitch_deg,         # BNO080
+        #     roll_deg        = imu.roll_deg,
+        #     pitch_rate_dps  = imu.pitch_rate_dps,
+        #     roll_rate_dps   = imu.roll_rate_dps,
+        # )
+        # frame_ts = grab_ts  # FrameBuffer records grab time; use that directly
+        fc_alt   = None   # STUB — wire to mavlink_conn.altitude_m()
+        sensors  = None   # STUB — wire to SensorData(...) as above
+        frame = mission.update(frame, result, current_altitude=fc_alt,
+                               sensor_data=sensors, frame_timestamp=grab_ts)
 
         # FPS overlay
         current_fps = fps_tracker.tick()

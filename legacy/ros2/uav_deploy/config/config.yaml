@@ -1,0 +1,170 @@
+# config.yaml — Training & model configuration for YOLO11-seg circle detection
+#
+# Edit the paths under [DATA] and [PATHS] before running train.py.
+# All other values are research-ready defaults.
+
+# ─── DATA ──────────────────────────────────────────────────────────────────────
+data: "data/circle_seg.yaml"     # path to dataset YAML produced by dataset.py
+imgsz: 640                        # input resolution; 1024 for high-res edge work
+
+# ─── MODEL ─────────────────────────────────────────────────────────────────────
+model: "yolo11n-seg.pt"
+# ── Model size guide for Hailo-8L (13 TOPS) ────────────────────────────────
+#
+# HARDWARE: Hailo-8L = 13 TOPS  (half of Hailo-8 at 26 TOPS)
+#
+# At 13 TOPS, the PCIe bandwidth budget between Pi 5 and Hailo-8L is tighter.
+# Large mask tensors (l/m) will saturate the transfer bus and drop FPS below
+# the 20 Hz minimum needed for stable control loops.
+#
+#   n (Nano)  — RECOMMENDED for Hailo-8L.
+#               ~2 ms inference, fits comfortably in 13 TOPS budget.
+#               Accuracy is sufficient: fire targets are large, solid-color,
+#               high-contrast discs on a uniform gray floor.
+#   s (Small) — Borderline on Hailo-8L. Use only if mAP < 0.75 with n.
+#   m (Medium)— Overloads Hailo-8L. DO NOT use.
+#   l / x     — DO NOT use on any Hailo-8L deployment.
+#
+# Train with n, validate mAP ≥ 0.75. Only step up to s if needed.
+# For Hailo export: python export.py --weights best.pt --format onnx
+#   then: hailomz compile yolo11n_seg --ckpt best.onnx (Hailo DFC toolchain)
+
+# Prototype count — key knob for circular edge quality
+# Default = 32 protos.  Set 64 for richer circular basis (requires model YAML edit).
+# See README.md §Model for instructions.
+mask_ratio: 4          # 4 = Hailo-8L recommended. PCIe bus saturates at 2 on Pi5.
+overlap_mask: true     # resolve overlapping circular instances correctly
+
+# ─── TRAINING ──────────────────────────────────────────────────────────────────
+epochs:        150
+batch:         16       # reduce to 8 if OOM with mask_ratio=2
+lr0:           0.01     # initial learning rate
+lrf:           0.01     # final LR = lr0 * lrf  (cosine schedule)
+momentum:      0.937
+weight_decay:  0.0005
+warmup_epochs: 3
+close_mosaic:  15       # disable mosaic last N epochs — critical for edge sharpness
+amp:           true     # FP16 mixed precision
+
+# ─── AUGMENTATION ──────────────────────────────────────────────────────────────
+degrees:    180.0   # full rotation — circles are orientation-invariant
+scale:        0.5
+fliplr:       0.5
+flipud:       0.3
+mosaic:       1.0
+copy_paste:   0.3   # instance copy-paste — improves occlusion robustness
+hsv_h:        0.015
+hsv_s:        0.7
+hsv_v:        0.4
+
+# ─── LOSS WEIGHTS ──────────────────────────────────────────────────────────────
+# Used by loss.py — not Ultralytics native params.
+# Tune lambda_boundary up if boundary F1 is the bottleneck.
+# Tune lambda_dice up if mask IoU lags.
+lambda_boundary: 0.4
+lambda_dice:     0.3
+
+# ─── PATHS ─────────────────────────────────────────────────────────────────────
+project: "runs/circle_seg"
+name:    "yolo11_v1"
+conf:    0.5        # inference confidence threshold — synced by evaluate.py --config
+save_period: 10     # checkpoint every N epochs
+val:         true
+
+# ─── HARDWARE ──────────────────────────────────────────────────────────────────
+device: 0           # GPU index; "cpu" for CPU-only; "0,1" for multi-GPU DDP
+workers: 8          # dataloader workers
+
+# ─── COMPETITION REFERENCE  (rulebook 27/02/2026 — read-only) ──────────────────
+# These are NOT training parameters. They document the competition rules so
+# every team member can see the constraints in one place.
+
+# Timing
+match_time_s:        300   # 5 minutes total (Round 1 + Round 2 combined)
+prep_time_s:          60   # field setup time before clock starts
+
+# Autonomous flight altitude (§IV)
+auto_altitude_min:   3.0   # metres — floor limit
+auto_altitude_max:   5.0   # metres — ceiling limit
+drop_altitude_min:   3.05  # metres — must be > 3.0 (with safety margin)
+drop_altitude_target: 3.25  # metres — optimal drop height (accuracy + safety margin)
+drop_altitude_max:   4.50  # metres — above this, ball drift grows unacceptably
+
+# Penalties (§VII)
+penalty_tz_hit:      -5    # pts per TZ frame collision
+penalty_boundary:    -5    # pts per 5-second boundary violation
+penalty_altitude:    -5    # pts per 5-second <3.0m violation in auto flight
+alt_penalty_time_s:   5    # seconds below 3.0m before penalty triggers
+
+# Scoring — Qualifier / Semi-final (§VI-A)
+score_takeoff_qual:  20    # auto takeoff ≥ 3.0 m
+score_f1_qual:       20    # red 1.0 m
+score_f2_qual:       20    # red 1.0 m
+score_f3_qual:       30    # yellow 0.6 m
+score_f4_qual:       30    # yellow 0.6 m
+score_f5_qual:       50    # blue 0.4 m
+score_landing_qual:  30    # auto land inside helipad
+
+# Scoring — Finals (§VI-B)
+score_takeoff_finals: 10   # auto takeoff ≥ 3.0 m
+score_f1_finals:      10   # red 1.0 m static
+score_f2_finals:      50   # red 1.0 m MOVING (10 cm/s)
+score_f3_finals:      30   # yellow 0.6 m static
+score_f4_finals:      30   # yellow 0.6 m static
+score_f5_finals:      50   # blue 0.4 m static
+score_landing_finals: 20   # auto land inside helipad
+
+# Field geometry (§IV)
+field_length_m:      24.0
+field_width_m:       12.0
+safe_zone_depth_m:    3.5
+tz_inner_diameter_m:  1.6  # TZ ring obstacle inner diameter
+tz_center_height_m:   1.7  # TZ ring centre above floor
+tz_total_height_m:    2.6  # TZ stand total height
+fire_circle_height_m: 0.1  # fire circles raised 0.1 m above floor on platform
+
+# Target colors (hex → verified in mission.py HSV ranges)
+color_red_hex:    "#FC2A1B"   # F1, F2 — diameter 1.0 m
+color_yellow_hex: "#FAFF37"   # F3, F4 — diameter 0.6 m
+color_blue_hex:   "#3C00FB"   # F5     — diameter 0.4 m
+
+# Retry rules (§VII)
+max_retries_per_round: 1      # clock keeps running, all scores reset on retry
+
+# ─── SENSOR GATING  (mission.py tuning — not rulebook constants) ──────────────
+# Attitude gate: drop is refused when BNO080 reports tilt beyond these limits.
+# At 8° pitch a ball released at 3.5 m lands ~49 cm off-centre — borderline for
+# F5 (radius 20 cm). Tighten to 5° for higher-accuracy requirements.
+drop_max_pitch_deg:  8.0   # degrees — |pitch| must be below this to release a ball
+drop_max_roll_deg:   8.0   # degrees — |roll|  must be below this to release a ball
+
+# Feedforward guard: suppress finals F2 feedforward when BNO080 angular rate
+# exceeds this threshold (drone actively pitching → pixel history is corrupted).
+# Falls back to the cmd_vx/vy > 0.35 m/s proxy when BNO080 is not connected.
+ff_angular_rate_gate_dps: 12.0  # deg/s — above this, feedforward is suppressed
+
+# Alignment gate: centre-pixel offset must be within this radius before drop.
+align_pixel_thresh: 25     # pixels
+
+# Scored-circle exclusion radius: detections within this radius of a previously
+# scored centroid are suppressed to prevent F1/F2 (both red) re-lock.
+scored_radius_px:      80     # pixels  (legacy reference — world radius below is what the code uses)
+scored_world_radius_m: 0.60   # metres  — altitude-invariant exclusion zone (SCORED_WORLD_RADIUS_M)
+
+# ─── DETECTION FILTER TUNING  (mission.py constants — do not edit separately) ─
+# These values must stay in sync with the corresponding constants in mission.py.
+# They are documented here so any threshold change is visible in one place.
+fill_ratio_min_circle:    0.40   # min mask-px / solid-circle-area; rejects court arcs & hollow rings
+max_fire_diameter_ratio:  0.55   # max diameter/frame_w; rejects court boundary arc lines
+h_landing_overlap_thresh: 0.45   # cross-class NMS: suppress circle if it overlaps H_landing bbox by this fraction
+drop_threshold:           0.70   # H_landing bbox_w / frame_w to switch APPROACH → LAND phase
+color_match_threshold:    0.25   # min fraction of HSV-matched pixels to declare a colour
+
+# ─── CAMERA DEFAULT ────────────────────────────────────────────────────────────
+default_f_px: 500.0   # fallback focal length (px) when calibration.npz is absent
+                      # ALWAYS override with the real value from camera_calibration.py
+
+# ─── VELOCITY SCALE FACTORS ───────────────────────────────────────────────────
+# At 3.5 m altitude 1 m lateral ≈ 285 px (f_px≈500). 100 px error → 0.5 m/s.
+px_to_ms_fire:    0.005   # pixel → m/s gain for fire targeting (faster response)
+px_to_ms_helipad: 0.004   # pixel → m/s gain for helipad approach (slower, more precise)

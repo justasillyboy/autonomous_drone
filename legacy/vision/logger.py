@@ -147,8 +147,12 @@ class TelemetryLogger:
         """
         import csv as _csv
         rows = []
-        with open(self._path) as f:
-            rows = list(_csv.DictReader(f))
+        try:
+            with open(self._path) as f:
+                rows = list(_csv.DictReader(f))
+        except (FileNotFoundError, OSError) as e:
+            print(f"[Logger] Could not read log file {self._path}: {e}")
+            return {}
 
         if not rows:
             print("[Logger] No data recorded.")

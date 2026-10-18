@@ -32,7 +32,7 @@ model: "yolo11n-seg.pt"
 # Prototype count — key knob for circular edge quality
 # Default = 32 protos.  Set 64 for richer circular basis (requires model YAML edit).
 # See README.md §Model for instructions.
-mask_ratio: 2          # lower = higher-res masks (default 4). 2 costs ~20% more VRAM.
+mask_ratio: 4          # 4 = Hailo-8L recommended. PCIe bus saturates at 2 on Pi5.
 overlap_mask: true     # resolve overlapping circular instances correctly
 
 # ─── TRAINING ──────────────────────────────────────────────────────────────────
@@ -87,39 +87,44 @@ prep_time_s:          60   # field setup time before clock starts
 auto_altitude_min:   3.0   # metres — floor limit
 auto_altitude_max:   5.0   # metres — ceiling limit
 drop_altitude_min:   3.05  # metres — must be > 3.0 (with safety margin)
+drop_altitude_target: 3.25  # metres — optimal drop height (accuracy + safety margin)
+drop_altitude_max:   4.50  # metres — above this, ball drift grows unacceptably
 
-# Penalties (§VII)
-penalty_tz_hit:      -5    # pts per TZ frame collision
-penalty_boundary:    -5    # pts per 5-second boundary violation
-penalty_altitude:    -5    # pts per 5-second <3.0m violation in auto flight
-alt_penalty_time_s:   5    # seconds below 3.0m before penalty triggers
+# Penalties (§VII) — READ-ONLY competition-rule values; shown for operator
+# reference. These are NOT tunable by load_mission_config_yaml(); editing them
+# here has no effect on mission.py.
+# penalty_tz_hit / penalty_boundary are referee-applied — the drone does not
+# self-detect these events, so no Python constant exists for them. Values are
+# documented here purely as a rulebook reference.
+penalty_tz_hit:      -5    # pts per TZ frame collision     (referee-applied, no Python constant)
+penalty_boundary:    -5    # pts per 5-second boundary violation (referee-applied, no Python constant)
+penalty_altitude:    -5    # pts per 5-second <3.0m violation in auto flight  → PENALTY_ALTITUDE
+alt_penalty_time_s:   5    # seconds below 3.0m before penalty triggers (rule-fixed) → ALT_PENALTY_TIME_S
 
 # Scoring — Qualifier / Semi-final (§VI-A)
+# Per-target points (F1..F5) are defined by the FIRE_TARGETS_QUALIFIER /
+# FIRE_TARGETS_FINALS tuples in mission.py — listing them here would duplicate
+# the truth and silently drift. Only takeoff/landing bonuses (which have real
+# Python constants) are mirrored here.
 score_takeoff_qual:  20    # auto takeoff ≥ 3.0 m
-score_f1_qual:       20    # red 1.0 m
-score_f2_qual:       20    # red 1.0 m
-score_f3_qual:       30    # yellow 0.6 m
-score_f4_qual:       30    # yellow 0.6 m
-score_f5_qual:       50    # blue 0.4 m
 score_landing_qual:  30    # auto land inside helipad
 
 # Scoring — Finals (§VI-B)
 score_takeoff_finals: 10   # auto takeoff ≥ 3.0 m
-score_f1_finals:      10   # red 1.0 m static
-score_f2_finals:      50   # red 1.0 m MOVING (10 cm/s)
-score_f3_finals:      30   # yellow 0.6 m static
-score_f4_finals:      30   # yellow 0.6 m static
-score_f5_finals:      50   # blue 0.4 m static
 score_landing_finals: 20   # auto land inside helipad
 
 # Field geometry (§IV)
-field_length_m:      24.0
-field_width_m:       12.0
-safe_zone_depth_m:    3.5
-tz_inner_diameter_m:  1.6  # TZ ring obstacle inner diameter
-tz_center_height_m:   1.7  # TZ ring centre above floor
-tz_total_height_m:    2.6  # TZ stand total height
-fire_circle_height_m: 0.1  # fire circles raised 0.1 m above floor on platform
+# Only the first three have Python counterparts and are consumed by the state
+# machine for geofencing / RTH heuristics. TZ-ring dimensions and the
+# fire-circle mount height are rulebook-reference values with no Python
+# constant — kept here so operators can see the full field layout in one place.
+field_length_m:      24.0  # → FIELD_LENGTH
+field_width_m:       12.0  # → FIELD_WIDTH
+safe_zone_depth_m:    3.5  # → SAFE_ZONE_DEPTH
+tz_inner_diameter_m:  1.6  # TZ ring obstacle inner diameter  (reference-only)
+tz_center_height_m:   1.7  # TZ ring centre above floor       (reference-only)
+tz_total_height_m:    2.6  # TZ stand total height            (reference-only)
+fire_circle_height_m: 0.1  # fire circles raised 0.1 m above floor on platform (reference-only)
 
 # Target colors (hex → verified in mission.py HSV ranges)
 color_red_hex:    "#FC2A1B"   # F1, F2 — diameter 1.0 m
@@ -128,3 +133,74 @@ color_blue_hex:   "#3C00FB"   # F5     — diameter 0.4 m
 
 # Retry rules (§VII)
 max_retries_per_round: 1      # clock keeps running, all scores reset on retry
+
+# ─── SENSOR GATING  (mission.py tuning — not rulebook constants) ──────────────
+# Attitude gate: drop is refused when BNO080 reports tilt beyond these limits.
+# At 8° pitch a ball released at 3.5 m lands ~49 cm off-centre — borderline for
+# F5 (radius 20 cm). Tighten to 5° for higher-accuracy requirements.
+drop_max_pitch_deg:  8.0   # degrees — |pitch| must be below this to release a ball
+drop_max_roll_deg:   8.0   # degrees — |roll|  must be below this to release a ball
+
+# Feedforward guard: suppress finals F2 feedforward when BNO080 angular rate
+# exceeds this threshold (drone actively pitching → pixel history is corrupted).
+# Falls back to the cmd_vx/vy > 0.35 m/s proxy when BNO080 is not connected.
+ff_angular_rate_gate_dps: 12.0  # deg/s — above this, feedforward is suppressed
+
+# Alignment gate: centre-pixel offset must be within this radius before drop.
+align_pixel_thresh: 25     # pixels
+
+# Scored-circle exclusion radius: detections within this radius of a previously
+# scored centroid are suppressed to prevent F1/F2 (both red) re-lock.
+scored_radius_px:      80     # pixels  (legacy reference — world radius below is what the code uses)
+scored_world_radius_m: 0.60   # metres  — altitude-invariant exclusion zone (SCORED_WORLD_RADIUS_M)
+
+# ─── DETECTION FILTER TUNING  (mission.py constants — do not edit separately) ─
+# These values must stay in sync with the corresponding constants in mission.py.
+# They are documented here so any threshold change is visible in one place.
+fill_ratio_min_circle:    0.40   # min mask-px / solid-circle-area; rejects court arcs & hollow rings
+max_fire_diameter_ratio:  0.55   # max diameter/frame_w; rejects court boundary arc lines
+h_landing_overlap_thresh: 0.45   # cross-class NMS: suppress circle if it overlaps H_landing bbox by this fraction
+drop_threshold:           0.70   # H_landing bbox_w / frame_w to switch APPROACH → LAND phase
+color_match_threshold:    0.25   # min fraction of HSV-matched pixels to declare a colour
+edge_clip_margin_px:      5      # pixels from frame edge that trigger edge-clip (radius untrustworthy)
+
+# ─── CAMERA DEFAULT ────────────────────────────────────────────────────────────
+default_f_px: 500.0   # fallback focal length (px) when calibration.npz is absent
+                      # ALWAYS override with the real value from camera_calibration.py
+
+# ─── VELOCITY SCALE FACTORS ───────────────────────────────────────────────────
+# At 3.5 m altitude 1 m lateral ≈ 285 px (f_px≈500). 100 px error → 0.5 m/s.
+px_to_ms_fire:    0.005   # pixel → m/s gain for fire targeting (faster response)
+px_to_ms_helipad: 0.004   # pixel → m/s gain for helipad approach (slower, more precise)
+
+# ─── FEEDFORWARD (Finals F2 moving target) ────────────────────────────────────
+ff_scale:             0.003  # target velocity (px/s) → drone additive velocity (m/s); Finals F2 only
+max_ff_px_s:         60.0   # feedforward clamp (px/s); above this indicates noise/tilt, not target motion
+ff_cmd_threshold_ms:  0.35  # maneuvering proxy threshold (m/s) — suppresses FF when BNO080 absent
+ff_history_len:        8    # frames of position history for feedforward linear-velocity fit
+
+# ─── ATTITUDE GATE ────────────────────────────────────────────────────────────
+tilt_max_relaxed_deg: 15.0  # relaxed attitude threshold after 1.5 s tilt-block (crosswind deadlock escape)
+
+# ─── DROP TIMING ──────────────────────────────────────────────────────────────
+drop_cooldown_s: 2.0   # seconds between successive ball releases (prevents double-drop)
+
+# ─── FC INNER-LOOP PID REFERENCE (read-only — do not tune here) ───────────────
+# These are ArduPilot ATC_RAT inner-loop gains running at 400 Hz on gyro feedback.
+# They are NOT our Python outer-loop PID. Documented here for the sync invariant.
+# Source of truth: mission.py FC_PID_PITCH_P/I/D, FC_PID_ROLL_P/I/D constants.
+fc_pid_pitch_p: 0.135   # ATC_RAT_PIT_P  (s/rad)
+fc_pid_pitch_i: 0.135   # ATC_RAT_PIT_I  (1/rad)
+fc_pid_pitch_d: 0.0036  # ATC_RAT_PIT_D  (s²/rad)
+fc_pid_roll_p:  0.135   # ATC_RAT_RLL_P  (s/rad)
+fc_pid_roll_i:  0.135   # ATC_RAT_RLL_I  (1/rad)
+fc_pid_roll_d:  0.0036  # ATC_RAT_RLL_D  (s²/rad)
+
+# ─── TOF MEDIAN FILTER ────────────────────────────────────────────────────────
+tof_spike_threshold_m:  1.5  # max deviation from median before reading is rejected as a spike
+                              # covers TZ gate (2.6 m) when flying at 3.5 m (Δ = 0.9 m < 1.5 m ✓)
+tof_spike_reset_count:  4    # consecutive spike rejections before assuming genuine step-change
+
+# ─── MATCH TIMING ─────────────────────────────────────────────────────────────
+land_early_at_s:        285.0  # force FIND_HELIPAD transition at this elapsed time (15 s margin before T=300 s)
+helipad_force_land_s:     5.0  # remaining-time threshold (s) that triggers emergency 1.0 m/s descent in FIND_HELIPAD

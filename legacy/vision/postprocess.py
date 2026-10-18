@@ -31,38 +31,29 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-# ── Import all shared logic from mission.py — single source of truth ─────────
+# ── Import shared logic from mission.py — single source of truth ─────────────
+# NOTE: Only functions/classes are imported by name. All YAML-tunable constants
+# (DROP_ALTITUDE_MIN, PX_TO_MS_FIRE, etc.) are accessed as `mission.X` inside
+# main() AFTER load_mission_config_yaml() runs — importing them by name here
+# would bind them at import time and silently ignore --config-yaml overrides.
+import mission
 from mission import (
-    # Filters
-    FILL_RATIO_MIN_CIRCLE,
-    MAX_FIRE_DIAMETER_RATIO,
-    H_LANDING_OVERLAP_THRESH,
+    # Pure functions (no value binding issue)
     collect_h_landing_bboxes,
     overlaps_h_landing,
-    fill_ratio,
     compute_diameter_ratio,
-    # Altitude system (replaces old d_ratio >= 0.70 for circles)
     AltitudeEstimator,
-    DROP_ALTITUDE_MIN,
-    DROP_ALTITUDE_MAX,
-    DROP_ALTITUDE_TARGET,
-    DEFAULT_F_PX,
-    ALIGN_PIXEL_THRESH,
-    # Competition targets
+    # Competition targets (not YAML-tunable)
     FIRE_REAL_DIAMETERS,
-    # Geometry
+    # Geometry / color / drawing helpers
     _extract_geometry,
-    # Color
     color_of_mask,
-    # Drawing
     _decide_action,
     _draw_ratio_bar,
     _draw_altitude_bar,
     _color_bgr,
-    # Control output
+    # Dataclass (reference, not value)
     FlightCommand,
-    PX_TO_MS_FIRE,
-    PX_TO_MS_HELIPAD,
 )
 
 
@@ -84,10 +75,31 @@ def main() -> None:
                         help="Override focal length in pixels (default: from calib or 500)")
     parser.add_argument("--finals",  action="store_true",
                         help="Use Finals target sizes / scoring labels")
+    parser.add_argument("--hsv-calib", default=None,
+                        help="HSV calibration JSON produced by hsv_calibrator.py. "
+                             "Run hsv_calibrator.py at the venue before the match "
+                             "to tune colour thresholds under actual lighting.")
+    parser.add_argument("--config-yaml", default=None,
+                        help="Path to config.yaml for on-field constant tuning. "
+                             "Overrides mission.py defaults without editing source. "
+                             "Example: --config-yaml config.yaml")
     args = parser.parse_args()
 
     # ── Load model ────────────────────────────────────────────────────────────
     model  = YOLO(args.weights)
+
+    # ── HSV colour calibration (optional, recommended for competition) ────────
+    if args.config_yaml:
+        from mission import load_mission_config_yaml
+        load_mission_config_yaml(args.config_yaml)
+
+    if args.hsv_calib:
+        from mission import load_hsv_calibration
+        try:
+            load_hsv_calibration(args.hsv_calib)
+            print(f"[HSV] Colour calibration loaded from {args.hsv_calib}")
+        except (FileNotFoundError, ValueError, KeyError) as e:
+            print(f"[HSV] WARNING: could not load {args.hsv_calib}: {e} — using built-in defaults")
 
     # ── Undistortion + focal length ───────────────────────────────────────────
     undist = None
@@ -100,7 +112,7 @@ def main() -> None:
             f_px = est.f_px
         print(f"[Calib] f_px={f_px:.1f} from {args.calib}")
     if f_px is None:
-        f_px = DEFAULT_F_PX
+        f_px = mission.DEFAULT_F_PX
 
     alt_est = AltitudeEstimator(f_px=f_px)
 
@@ -121,7 +133,7 @@ def main() -> None:
     h_bboxes = collect_h_landing_bboxes(result, names)
 
     # ── Per-detection processing ──────────────────────────────────────────────
-    if result.masks is not None:
+    if result.masks is not None and result.boxes is not None:
         for mask_obj, box in zip(result.masks.data, result.boxes):
             cls_id     = int(box.cls[0].item())
             class_name = names.get(cls_id, "")
@@ -132,18 +144,18 @@ def main() -> None:
             geo = _extract_geometry(mask_obj, frame_w, frame_h)
             if geo is None:
                 continue
-            cx, cy, radius, fr, cnt_frame = geo
+            cx, cy, radius, fr, cnt_frame, edge_clipped = geo
 
             # ── Circle ───────────────────────────────────────────────────────
             if class_name == "circle":
                 # Filter 1: fill ratio (rejects court arcs, hollow rings)
-                if fr < FILL_RATIO_MIN_CIRCLE:
+                if fr < mission.FILL_RATIO_MIN_CIRCLE:
                     cv2.drawContours(img, [cnt_frame], -1, (40, 40, 40), 1)
                     continue
 
                 # Filter 2: size cap (rejects giant court boundary lines)
                 d_ratio = compute_diameter_ratio(radius, frame_w)
-                if d_ratio > MAX_FIRE_DIAMETER_RATIO:
+                if d_ratio > mission.MAX_FIRE_DIAMETER_RATIO:
                     cv2.drawContours(img, [cnt_frame], -1, (40, 40, 40), 1)
                     continue
 
@@ -158,25 +170,38 @@ def main() -> None:
                         max(0, cx-radius):min(frame_w, cx+radius)],
                 ) if radius > 0 else None
 
-                # Altitude estimation (replaces old d_ratio >= 0.70)
-                D_real = FIRE_REAL_DIAMETERS.get(detected_color or "", 1.0)
-                Z_est  = alt_est.estimate(radius * 2.0, D_real)
+                # Altitude estimation
+                # EDGE-CLIP GUARD: if the circle is partially off-screen, the
+                # enclosing radius is that of the VISIBLE ARC, not the full
+                # circle — Z = f*D/(2r) would wildly overestimate altitude.
+                # Fall back to DROP_ALTITUDE_TARGET so we don't command a dive.
+                D_real    = FIRE_REAL_DIAMETERS.get(detected_color or "", 1.0)
+                Z_est_raw = alt_est.estimate(radius * 2.0, D_real)
+                Z_est     = mission.DROP_ALTITUDE_TARGET if edge_clipped else Z_est_raw
 
-                altitude_safe = DROP_ALTITUDE_MIN <= Z_est <= DROP_ALTITUDE_MAX
+                altitude_safe = (mission.DROP_ALTITUDE_MIN <= Z_est <= mission.DROP_ALTITUDE_MAX)
+                # Never trigger a drop on a partially-off-screen circle: the
+                # altitude estimate is the fallback constant, not measured.
+                if edge_clipped:
+                    altitude_safe = False
+
                 offset_x      = cx - frame_w // 2
                 offset_y      = cy - frame_h // 2
-                aligned       = (abs(offset_x) < ALIGN_PIXEL_THRESH and
-                                 abs(offset_y) < ALIGN_PIXEL_THRESH)
+                aligned       = (abs(offset_x) < mission.ALIGN_PIXEL_THRESH and
+                                 abs(offset_y) < mission.ALIGN_PIXEL_THRESH)
 
                 action = ("DROP"    if (altitude_safe and aligned) else
                           "ALIGN"   if altitude_safe else
-                          "DESCEND" if Z_est > DROP_ALTITUDE_MAX else "ASCEND")
+                          "DESCEND" if Z_est > mission.DROP_ALTITUDE_MAX else "ASCEND")
+                if edge_clipped:
+                    action = f"EDGE_CLIP/{action}"
 
                 # FlightCommand (same interface as test_video.py)
-                cmd_vx = float(np.clip(-offset_y * PX_TO_MS_FIRE, -1.0, 1.0))
-                cmd_vy = float(np.clip( offset_x * PX_TO_MS_FIRE, -1.0, 1.0))
-                cmd_vz = (0.0 if altitude_safe else
-                          -0.6 if Z_est > DROP_ALTITUDE_MAX else 0.5)
+                cmd_vx = float(np.clip(-offset_y * mission.PX_TO_MS_FIRE, -1.0, 1.0))
+                cmd_vy = float(np.clip( offset_x * mission.PX_TO_MS_FIRE, -1.0, 1.0))
+                cmd_vz = (0.0  if altitude_safe else
+                           0.6  if Z_est > mission.DROP_ALTITUDE_MAX else   # too high → descend (NED +)
+                          -0.5)                                               # too low  → ascend  (NED -)
                 cmd = FlightCommand(vx=cmd_vx, vy=cmd_vy, vz=cmd_vz,
                                     yaw_lock=True, phase="FIRE", action=action)
                 print(cmd)
@@ -189,10 +214,11 @@ def main() -> None:
                 cv2.line(img, (fc_x-15, fc_y), (fc_x+15, fc_y), (255,255,255), 1)
                 cv2.line(img, (fc_x, fc_y-15), (fc_x, fc_y+15), (255,255,255), 1)
 
-                alt_src = "SNS" if False else "VIS"   # single image: always VIS
+                alt_src = "VIS"   # single-image tool: no live sensor available
                 alt_str = f"Z={Z_est:.2f}m[{alt_src}]" if Z_est < 99 else "Z=?"
+                edge_str = " [EDGE]" if edge_clipped else ""
                 label   = (f"Circle [{detected_color or '?'}] | "
-                           f"{alt_str} fr={fr:.2f} | {action} | {conf_score:.2f}")
+                           f"{alt_str}{edge_str} fr={fr:.2f} | {action} | {conf_score:.2f}")
                 label_y = max(20, cy - radius - 12)
                 cv2.putText(img, label, (max(0, cx - 80), label_y),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_bgr, 2)
@@ -219,8 +245,8 @@ def main() -> None:
 
                 offset_x = pad_cx - frame_w // 2
                 offset_y = pad_cy - frame_h // 2
-                cmd_vx   = float(np.clip(-offset_y * PX_TO_MS_HELIPAD, -0.5, 0.5))
-                cmd_vy   = float(np.clip( offset_x * PX_TO_MS_HELIPAD, -0.5, 0.5))
+                cmd_vx   = float(np.clip(-offset_y * mission.PX_TO_MS_HELIPAD, -0.5, 0.5))
+                cmd_vy   = float(np.clip( offset_x * mission.PX_TO_MS_HELIPAD, -0.5, 0.5))
                 cmd_vz   = 0.3 if action != "LAND" else 0.4
                 cmd = FlightCommand(vx=cmd_vx, vy=cmd_vy, vz=cmd_vz,
                                     yaw_lock=True, phase="FIND_HELIPAD", action=action)
