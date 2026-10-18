@@ -1,7 +1,7 @@
 # Thiết kế nâng cấp: Autonomous Fire-Fighting UAV
 
 - **Ngày:** 2026-10-18
-- **Trạng thái:** Chờ chủ dự án duyệt
+- **Trạng thái:** Đã duyệt 2026-10-18
 - **Repo:** `github.com/justasillyboy/autonomous_drone` (clone local: `~/dev/autonomous_drone`)
 - **Nguồn code cũ:** `~/Documents/AI/UAV_Competition_NCKH/` (giữ nguyên cho tới mốc M6)
 
