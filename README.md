@@ -8,7 +8,7 @@ camera, ArduPilot flight controller via MAVROS.
 > **Status: being rebuilt.** The competition code is imported unchanged under `legacy/`.
 > It is being refactored into tested packages with a closed-loop Gazebo + ArduPilot SITL
 > simulation and on-device benchmarks. See the
-> [design spec](docs/superpowers/specs/2026-10-18-uav-upgrade-design.md) (Vietnamese).
+> [design spec](docs/superpowers/specs/2026-10-18-uav-upgrade-design.md).
 
 ## Repository map
 

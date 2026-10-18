@@ -1,203 +1,211 @@
-# Thiết kế nâng cấp: Autonomous Fire-Fighting UAV
+# Upgrade design: Autonomous Fire-Fighting UAV
 
-- **Ngày:** 2026-10-18
-- **Trạng thái:** Đã duyệt 2026-10-18
-- **Repo:** `github.com/justasillyboy/autonomous_drone` (clone local: `~/dev/autonomous_drone`)
-- **Nguồn code cũ:** `~/Documents/AI/UAV_Competition_NCKH/` (giữ nguyên cho tới mốc M6)
+- **Date:** 2026-10-18
+- **Status:** Approved 2026-10-18
+- **Repo:** `github.com/justasillyboy/autonomous_drone` (local clone: `~/dev/autonomous_drone`)
+- **Legacy code:** imported into `legacy/` (binaries in the `legacy-assets-v0` release); the
+  original `~/Documents/AI/UAV_Competition_NCKH/` folder was reduced to a README and private
+  docs during M0
 
 ---
 
-## 1. Mục tiêu
+## 1. Goals
 
-Biến dự án thi "UAV Cứu Hỏa Cứu Hộ 2026" thành một dự án portfolio cá nhân, public, chứng minh được
-năng lực ở **cả ba mảng**: Robotics/Autonomy, Computer Vision/ML, Edge AI. Mỗi mảng phải có **một câu
-khẳng định đi kèm số đo thật**, không có khẳng định nào thiếu bằng chứng:
+Turn the "UAV Cứu Hỏa Cứu Hộ 2026" competition entry into a personal, public portfolio project
+that proves competence in **all three areas**: Robotics/Autonomy, Computer Vision/ML and Edge AI.
+Each area gets **one claim backed by a real measurement**; no claim ships without evidence:
 
-| Mảng | Câu khẳng định mục tiêu | Bằng chứng |
+| Area | Target claim | Evidence |
 |---|---|---|
-| Robotics | Nhiệm vụ tự hành trọn vẹn (cất cánh → 5 lần thả → hạ cánh) chạy kín vòng trong Gazebo + ArduPilot SITL, tỉ lệ thành công X% trên N ≥ 50 lượt ngẫu nhiên hoá | Referee độc lập trong sim, file kết quả JSON từng lượt, video demo |
-| CV / ML | Nghiên cứu sim-to-real và ablation loss trên tập test ảnh thật đóng băng | Bảng mAP / Boundary F1 / Hausdorff, có seed và khoảng tin cậy |
-| Edge AI | Model INT8 chạy trên Hailo-8L, vòng end-to-end ≥ 20 Hz, có bảng latency từng tầng | Benchmark p50/p95/p99 đo trên Pi 5, có cả chế độ HIL |
+| Robotics | The full autonomous mission (takeoff → 5 drops → landing) runs closed-loop in Gazebo + ArduPilot SITL with an X% success rate over N ≥ 50 randomised runs | Independent in-sim referee, per-run JSON results, demo video |
+| CV / ML | A sim-to-real study and a loss ablation on a frozen real-image test set | mAP / Boundary F1 / Hausdorff tables with seeds and confidence intervals |
+| Edge AI | An INT8 model on the Hailo-8L with an end-to-end loop ≥ 20 Hz and a per-stage latency table | p50/p95/p99 benchmark measured on the Pi 5, including HIL mode |
 
-### Ràng buộc đã chốt
+### Fixed constraints
 
-- Dự án **cá nhân**, repo **public**.
-- Thời gian **hơn 6 tuần** (kế hoạch 8 tuần, mục 13).
-- Phần cứng: **Raspberry Pi 5 + Hailo-8L** và Mac M1 Pro 16 GB. **Không có drone**, nên phần bay
-  được chứng minh bằng mô phỏng và hardware-in-the-loop.
-- **Hướng A:** Gazebo Harmonic + ArduPilot SITL + ROS 2, có chế độ HIL với Pi 5.
-- File PDF thể lệ và bản dịch thể lệ của BTC **không** đưa lên repo public. README chỉ tóm tắt luật.
-- Docs hướng ra ngoài (README, báo cáo, ADR) viết **tiếng Anh**, vì nhà tuyển dụng đọc chúng. Spec và
-  plan nội bộ viết tiếng Việt.
+- **Personal** project, **public** repo.
+- Timeline **longer than 6 weeks** (8-week plan, section 13).
+- Hardware: **Raspberry Pi 5 + Hailo-8L** and a Mac M1 Pro 16 GB. **No drone**, so flight is
+  demonstrated with simulation and hardware-in-the-loop.
+- **Approach A:** Gazebo Harmonic + ArduPilot SITL + ROS 2, with an HIL mode on the Pi 5.
+- The organisers' rulebook PDF and its translation are **not** published. The README only
+  summarises the rules.
+- **Everything is written in English** — README, reports, ADRs, specs, plans, code comments,
+  commit messages (owner decision 2026-10-18).
 
-### Ngoài phạm vi (YAGNI)
+### Out of scope (YAGNI)
 
-Bay thật; hỗ trợ PX4; điều khiển học bằng RL; nhiều drone; web dashboard; nền tảng MLOps
-(chỉ dùng config trong git + CSV kết quả, W&B là tuỳ chọn bật bằng flag).
+Real flight; PX4 support; RL-based control; multiple drones; web dashboard; an MLOps platform
+(only configs in git + result CSVs; W&B is optional behind a flag).
 
 ---
 
-## 2. Hiện trạng (khảo sát ngày 2026-10-18)
+## 2. Current state (surveyed 2026-10-18)
 
-**Điểm mạnh, giữ lại:**
-- Pipeline CV đầy đủ: bộ sinh ảnh synthetic (`dataset.py`), 286 ảnh thật có nhãn (Roboflow),
-  YOLO11n-seg với boundary/Dice loss, đánh giá bằng Boundary F1 và Hausdorff, export ONNX.
-- State machine 8 phase: lọc median ToF, đồng bộ IMU theo timestamp frame, feedforward cho F2
-  di động, attitude gate khi thả, geofence dead-reckoning.
-- Kiến trúc ROS 2 năm node: QoS có cân nhắc, watchdog, e-stop, GUIDED-mode gate.
+**Strengths to keep:**
+- A complete CV pipeline: synthetic image generator (`dataset.py`), 286 labelled real images
+  (Roboflow), YOLO11-seg with boundary/Dice loss, evaluation with Boundary F1 and Hausdorff,
+  ONNX export.
+- An 8-phase state machine: median-filtered ToF, IMU synchronised to the frame timestamp,
+  feedforward for the moving F2 target, attitude gate on drop, dead-reckoning geofence.
+- A five-node ROS 2 architecture: considered QoS, watchdog, e-stop, GUIDED-mode gate.
 
-**Lỗi / nợ kỹ thuật cần xử lý:**
+**Defects / technical debt to address:**
 
-| # | Vấn đề | Hậu quả |
+| # | Problem | Consequence |
 |---|---|---|
-| D1 | Chưa từng chạy end-to-end: không có `.hef`, `calibration.npz`, `hsv_calib.json` | Không có số đo nào |
-| D2 | `uav_deploy` là package `ament_python` nhưng chứa `msg/` | rosidl không sinh message, nên `from uav_deploy.msg import …` lỗi. Package fallback `uav_interfaces` không tồn tại |
-| D3 | `mission_control_node` vẽ lại mask giả (`_ShimResult`) để gọi `mission.update()` | Hình học bị tính hai lần, mission node phải nhận cả ảnh, hai node phụ thuộc ngược |
-| D4 | `mission.py` dài 3.095 dòng: `_fire_phase` 547 dòng, `update` 435 dòng, mọi phase nhận `frame` + YOLO `result` | Perception lẫn với ra quyết định, không unit test được |
-| D5 | Thời gian tính bằng số frame (`fps_hint`) | Sai khi FPS dao động; hỏng khi sim chạy chậm hơn thời gian thực |
-| D6 | Config chỉnh qua việc ghi đè biến global của module; phải load **trước** khi khởi tạo | Bẫy thứ tự gọi, phải đồng bộ tay giữa `config.yaml`, README và code |
-| D7 | **Nghi vấn:** `action_mavros_node` đẩy `vx, vy, vz, yaw_rate` theo body-NED thẳng vào `/mavros/setpoint_velocity/cmd_vel_unstamped`. MAVROS nhận theo quy ước ROS (ENU/FLU), mặc định ở khung world | Có thể đảo dấu z/y/yaw (lệnh hạ thành bay lên) và sai khung body/world. **Xác minh trong SITL ở M2** |
-| D8 | `data.yaml` trỏ tới `valid/`, `test/` nhưng chỉ có `train/` | Không có tập ảnh thật để đánh giá độc lập |
-| D9 | 3 bản sao code (chỉ khác khoảng trắng) cùng 1 bản cũ hơn, không có git; `.venv` Linux/CUDA 5.2 GB nằm trong `~/Documents` đang sync iCloud | Lộn xộn, tốn đĩa, lệnh shell bị treo |
-| D10 | *(phát hiện khi kiểm kê M0)* Cả 4 file weight/ONNX đều **chỉ train trên ảnh synthetic**; dataset thật export ngày 2026-04-23, sau lần train cuối | Chưa từng có model nào học từ ảnh thật |
-| D11 | *(phát hiện khi kiểm kê M0)* `best.onnx` (bản định deploy) là **YOLO11s**, còn `best.pt` cạnh nó là YOLO11n | ONNX không phải bản export của `best.pt`; trái quy tắc "chỉ dùng n trên Hailo" của CLAUDE.md cũ |
+| D1 | Never ran end to end: no `.hef`, `calibration.npz` or `hsv_calib.json` | No measurements at all |
+| D2 | `uav_deploy` is an `ament_python` package but contains `msg/` | rosidl does not generate the messages, so `from uav_deploy.msg import …` fails. The fallback package `uav_interfaces` does not exist |
+| D3 | `mission_control_node` re-draws fake masks (`_ShimResult`) to call `mission.update()` | Geometry is computed twice, the mission node has to receive images, the two nodes depend on each other backwards |
+| D4 | `mission.py` is 3,095 lines: `_fire_phase` 547 lines, `update` 435 lines, every phase takes `frame` + the YOLO `result` | Perception is mixed with decision-making; nothing is unit-testable |
+| D5 | Time is counted in frames (`fps_hint`) | Wrong when FPS fluctuates; broken when the sim runs slower than real time |
+| D6 | Config is applied by overwriting module globals and must be loaded **before** construction | An ordering trap; `config.yaml`, README and code must be kept in sync by hand |
+| D7 | **Suspected:** `action_mavros_node` pushes body-NED `vx, vy, vz, yaw_rate` straight into `/mavros/setpoint_velocity/cmd_vel_unstamped`. MAVROS expects ROS conventions (ENU/FLU), in the world frame by default | z/y/yaw signs may be flipped (a descend command climbs) and body/world frames confused. **Verify in SITL during M2** |
+| D8 | `data.yaml` points at `valid/` and `test/`, but only `train/` exists | No independent real-image evaluation set |
+| D9 | 3 copies of the code (whitespace-only differences) plus 1 older copy, no git; a 5.2 GB Linux/CUDA `.venv` inside iCloud-synced `~/Documents` | Clutter, wasted disk, hanging shell commands |
+| D10 | *(found during the M0 inventory)* All 4 weight/ONNX files were **trained on synthetic images only**; the real dataset was exported on 2026-04-23, after the last training run | No model has ever learned from real images |
+| D11 | *(found during the M0 inventory)* `best.onnx` (meant for deployment) is **YOLO11s**, while the `best.pt` next to it is YOLO11n | The ONNX is not an export of that `best.pt`, and it contradicts the legacy "only `n` on Hailo" rule |
 
-**Nguồn sự thật cho code cũ:** `fixed_yolo_circle_seg/files/` (giống hệt bản trong `deploy_files_…`
-và `UAV_node_ROS2/src/uav_deploy/main/` sau khi bỏ khác biệt khoảng trắng), trừ `deploy_guide.md`
-lấy bản mới hơn trong `deploy_files_drone_competition/`; cộng thêm package
-`UAV_node_ROS2/src/uav_deploy/` (các node, 2026-04-21). Bản `yolo_circle_seg/` (2026-04-13) đã bị
-thay thế. Folder Google Drive "NodeRos2_TuHanh" là bản sao của
-`deploy_files_drone_competition` (đã đối chiếu từng file node).
+**Source of truth for the legacy code:** `fixed_yolo_circle_seg/files/` (identical to the copies in
+`deploy_files_…` and `UAV_node_ROS2/src/uav_deploy/main/` once whitespace is ignored), except
+`deploy_guide.md`, taken from the newer copy in `deploy_files_drone_competition/`; plus the
+`UAV_node_ROS2/src/uav_deploy/` package (the nodes, 2026-04-21). The `yolo_circle_seg/` copy
+(2026-04-13) is superseded. The Google Drive folder "NodeRos2_TuHanh" is a copy of
+`deploy_files_drone_competition` (checked file by file for the nodes).
 
 ---
 
-## 3. Cấu trúc repo đích
+## 3. Target repo layout
 
 ```
 autonomous_drone/
-├── README.md                 # giới thiệu, GIF demo, bảng kết quả, sơ đồ kiến trúc (EN)
-├── LICENSE                   # Apache-2.0 (khớp package.xml cũ)
+├── README.md                 # intro, demo GIF, results table, architecture diagram
+├── LICENSE                   # Apache-2.0 (matches the legacy package.xml)
 ├── pyproject.toml            # uv workspace: uav_core, ml, edge, tools
 ├── .pre-commit-config.yaml   # ruff, ruff-format, end-of-file, check-added-large-files (5 MB)
 ├── docs/
-│   ├── architecture.md       # sơ đồ ROS graph, data flow, ngân sách thời gian
-│   ├── competition-rules.md  # tóm tắt luật (EN), không kèm PDF BTC
-│   ├── config-reference.md   # SINH TỰ ĐỘNG từ schema config (mục 5); CI kiểm tra luôn khớp
-│   ├── decisions/            # ADR-0001…, chuyển từ "Architecture Decisions" trong CLAUDE.md cũ
-│   ├── report/               # báo cáo kỹ thuật (mục 12)
+│   ├── architecture.md       # ROS graph, data flow, timing budget
+│   ├── competition-rules.md  # rules summary, without the organisers' PDF
+│   ├── config-reference.md   # GENERATED from the config schema (section 5); CI checks it stays in sync
+│   ├── decisions/            # ADR-0001…, migrated from "Architecture Decisions" in the legacy CLAUDE.md
+│   ├── report/               # technical report (section 12)
 │   └── superpowers/{specs,plans}/
-├── legacy/                   # code cũ, nguyên trạng; bị xoá ở cuối M1 (mục 4)
-├── uav_core/                 # Python thuần, KHÔNG import ROS / cv2-GUI / torch
+├── legacy/                   # legacy code, as-is; deleted step by step (section 4)
+├── uav_core/                 # pure Python, NO ROS / cv2-GUI / torch imports
 │   ├── src/uav_core/
-│   │   ├── config.py         # schema pydantic: MissionConfig, RulebookConfig
+│   │   ├── config.py         # pydantic schema: MissionConfig, RulebookConfig
 │   │   ├── types.py          # Detection, SensorSnapshot, FlightCommand, MissionStatus
-│   │   ├── frames.py         # chuyển đổi body-FRD ↔ ROS-FLU / ENU, một nơi duy nhất
+│   │   ├── frames.py         # body-FRD ↔ ROS-FLU / ENU conversions, in one place only
 │   │   ├── perception/       # geometry.py, color.py, filters.py, altitude_vision.py
-│   │   ├── estimation/       # altitude.py (thứ tự ưu tiên), tof_filter.py, imu_sync.py, target_motion.py
+│   │   ├── estimation/       # altitude.py (priority ladder), tof_filter.py, imu_sync.py, target_motion.py
 │   │   ├── control/          # pid.py, feedforward.py, drop_gate.py
 │   │   ├── mission/          # phases/*.py, state_machine.py, scoring.py, geofence.py, timers.py
-│   │   └── viz/hud.py        # vẽ HUD (cv2), tách khỏi phần ra quyết định
+│   │   └── viz/hud.py        # HUD drawing (cv2), separate from decision-making
 │   └── tests/
 ├── ml/
-│   ├── src/uav_ml/           # synth/ (từ dataset.py), train.py, loss.py, evaluate.py, export.py
-│   ├── configs/              # mỗi thí nghiệm một file YAML
-│   ├── experiments/          # script E1–E4 + kết quả CSV + script vẽ hình
+│   ├── src/uav_ml/           # synth/ (from dataset.py), train.py, loss.py, evaluate.py, export.py
+│   ├── configs/              # one YAML file per experiment
+│   ├── experiments/          # E1–E4 scripts + CSV results + plotting scripts
 │   └── tests/
 ├── edge/
-│   ├── hailo/                # notebook compile cho Colab (x86), script trích frame calib, alls/yaml
-│   ├── runtime/              # backend: hailo.py, onnx.py, ultralytics.py (cùng một interface)
-│   └── benchmarks/           # script đo + kết quả
+│   ├── hailo/                # Colab (x86) compile notebook, calib-frame extraction, alls/yaml
+│   ├── runtime/              # backends: hailo.py, onnx.py, ultralytics.py (one shared interface)
+│   └── benchmarks/           # measurement scripts + results
 ├── ros2_ws/src/
 │   ├── uav_interfaces/       # ament_cmake: Detection.msg, Detections.msg, FlightCommand.msg, MissionStatus.msg
-│   ├── uav_perception/       # perception_node (+ camera v4l2 tích hợp), camera_node, hud_node (đều tuỳ chọn)
-│   ├── uav_mission/          # mission_node: lớp vỏ mỏng quanh uav_core
+│   ├── uav_perception/       # perception_node (+ built-in v4l2 camera), camera_node, hud_node (both optional)
+│   ├── uav_mission/          # mission_node: a thin shell around uav_core
 │   ├── uav_hardware/         # bno080_node, action_node (MAVROS)
 │   ├── uav_sim/              # sim_referee, ball_dropper, target_mover, scenario_runner
-│   └── uav_bringup/          # launch real / sim / hil + file params
+│   └── uav_bringup/          # real / sim / hil launch files + params
 ├── sim/
-│   ├── worlds/competition_field.sdf.jinja   # template, các kịch bản điền vào
+│   ├── worlds/competition_field.sdf.jinja   # template filled in by scenarios
 │   ├── models/               # fire_circle_{red,yellow,blue}, tz_gate, helipad, ball, iris_downcam
-│   └── scenarios/            # schema ngẫu nhiên hoá + seed
-├── tools/                    # camera_calibration.py, hsv_calibrator.py, bag_report.py (từ logger.py)
+│   └── scenarios/            # randomisation schema + seeds
+├── tools/                    # camera_calibration.py, hsv_calibrator.py, bag_report.py (from logger.py)
 ├── docker/                   # sim.Dockerfile, pi.Dockerfile, compose.yaml, cyclonedds.xml
-├── scripts/                  # fetch_assets.sh, run_monte_carlo.sh
-└── .github/workflows/        # ci.yml, sim-smoke.yml (chạy tay / theo lịch)
+├── scripts/                  # fetch_assets.sh, publish_assets.sh, run_monte_carlo.sh
+└── .github/workflows/        # ci.yml, sim-smoke.yml (manual / scheduled)
 ```
 
-**Quy tắc phụ thuộc** (CI kiểm tra bằng `import-linter`):
-- `uav_core` không phụ thuộc gì trong repo.
+**Dependency rules** (enforced in CI with `import-linter`):
+- `uav_core` depends on nothing in the repo.
 - `ml`, `edge`, `tools` → `uav_core`.
-- Các package ROS → `uav_core` (+ `edge.runtime` cho perception).
-- Không ai được import ngược vào `legacy/`. `legacy/` chỉ được dùng trong characterization test.
+- ROS packages → `uav_core` (+ `edge.runtime` for perception).
+- Nothing may import from `legacy/`. `legacy/` is used only by characterisation tests.
 
 ---
 
-## 4. Chuyển code cũ sang repo
+## 4. Migrating the legacy code
 
-1. **Import code cũ nguyên trạng** *(đã làm 2026-10-18)*. Dự án cũ không có git mà có 4 snapshot
-   (12/04, 13/04, 18–19/04, 21/04), nên mỗi snapshot là một commit `chore: import legacy …`,
-   cũ trước mới sau. Bản cuối: `legacy/vision/` từ `fixed_yolo_circle_seg/files/`,
-   `legacy/ros2/uav_deploy/` từ `src/uav_deploy` (bỏ `build/ install/ log/ __pycache__`).
-   Không sửa một byte nào (đã so 52/52 file), để các commit refactor sau đó có diff sạch.
-   Nguồn gốc từng snapshot ghi trong `legacy/README.md`.
-2. **Không đưa file nhị phân vào git.** `.gitignore` chặn `*.pt *.onnx *.hef *.mp4 *.zip *.npz`,
-   `data/`, `runs/`, `.venv/`, `docs/private/`. Các asset upload lên **GitHub Release
-   `legacy-assets-v0`** (chủ dự án xác nhận toàn bộ, kể cả dataset, được public);
-   `scripts/fetch_assets.sh` tải về và kiểm sha256 theo `assets/SHA256SUMS`. Tên asset mô tả đúng
-   nội dung (bảng đầy đủ trong `legacy/README.md`):
-   - weights: `yolo11s-seg_synth_2026-04-09.pt`, `yolo11n-seg_synth_2026-04-14.pt` và hai bản ONNX
-     YOLO11s (xem D10, D11)
-   - `dataset-real-286.zip` (286 ảnh thật có nhãn, đã remap ID, bỏ `__MACOSX`)
-   - `real-frames-300.zip` (300 frame thật: 286 frame chính là ảnh có nhãn ở trên, chỉ 14 frame chưa có nhãn)
+1. **Import the legacy code as-is** *(done 2026-10-18)*. The old project had no git but 4
+   snapshots (04-12, 04-13, 04-18/19, 04-21), so each snapshot became one `chore: import legacy …`
+   commit, oldest first. Final state: `legacy/vision/` from `fixed_yolo_circle_seg/files/`,
+   `legacy/ros2/uav_deploy/` from `src/uav_deploy` (without `build/ install/ log/ __pycache__`).
+   Not a single byte changed (52/52 files compared), so the later refactor commits have clean
+   diffs. The provenance of every snapshot is recorded in `legacy/README.md`.
+2. **No binaries in git.** `.gitignore` blocks `*.pt *.onnx *.hef *.mp4 *.zip *.npz`, `data/`,
+   `runs/`, `.venv/`, `docs/private/`. The assets are attached to the **GitHub Release
+   `legacy-assets-v0`** (the owner confirmed everything, including the dataset, may be public);
+   `scripts/fetch_assets.sh` downloads them and checks their sha256 against `assets/SHA256SUMS`
+   (verified from a fresh clone: 18/18 OK). Asset names describe their actual content (full table
+   in `legacy/README.md`):
+   - weights: `yolo11s-seg_synth_2026-04-09.pt`, `yolo11n-seg_synth_2026-04-14.pt` and two
+     YOLO11s ONNX exports (see D10, D11)
+   - `dataset-real-286.zip` (286 labelled real images, class IDs remapped, no `__MACOSX`)
+   - `real-frames-300.zip` (300 real frames: 286 of them are the labelled images above, only 14 are unlabelled)
    - `hailo-calib-frames.zip`, `debug-images.zip`
-   - 10 video kết quả khác nhau: `output_{2,3,7,8}`, `final_flight_result{,_new}`, `ket_qua`,
+   - 10 distinct result videos: `output_{2,3,7,8}`, `final_flight_result{,_new}`, `ket_qua`,
      `result-v0`, `result_new-v0`, `result_new-v1`
-3. **Chỉ giữ local:** PDF thể lệ, `Thể lệ_dịch.docx`, `node_feedback.docx`, `node_split_deploy.docx`
-   → `docs/private/` (gitignore).
-4. **Thay thế dần:** mỗi module mới của `uav_core` hoặc `ml` thay một phần của `legacy/`. Hết M1,
-   `legacy/vision/mission.py` và `legacy/ros2/` bị xoá; hết M3, các script ML trong legacy bị xoá.
-   Lịch sử git là bằng chứng của quá trình nâng cấp.
-5. **Dọn `~/Documents`** (mốc M0; chủ dự án chọn ngày 2026-10-18): repo là nguồn duy nhất, folder
-   cũ chỉ còn `README.md` (ghi cái gì đã chuyển đi đâu) và `private/` (4 tài liệu riêng, làm bản
-   backup iCloud). Mọi thứ khác chuyển vào **Thùng rác** qua Finder (không xoá vĩnh viễn), **chỉ
-   sau khi** Release đã có đủ asset và `fetch_assets.sh` tải về khớp sha256. Trong đó có:
-   - `.venv` 5.5 GB, `UAV_node_ROS2.zip` 2.9 GB (snapshot code bên trong đã vào git)
-   - các zip/bản sao trùng, `__MACOSX`, `build/install/log/__pycache__`
+3. **Local only:** the rulebook PDF, `Thể lệ_dịch.docx`, `node_feedback.docx`, `node_split_deploy.docx`
+   → `docs/private/` (gitignored).
+4. **Replace gradually:** every new `uav_core` or `ml` module replaces a part of `legacy/`. By the
+   end of M1, `legacy/vision/mission.py` and `legacy/ros2/` are deleted; by the end of M3, the
+   legacy ML scripts are deleted. The git history documents the upgrade.
+5. **Clean up `~/Documents`** (M0; owner's choice on 2026-10-18): the repo is the single source of
+   truth; the old folder keeps only `README.md` (what moved where) and `private/` (the 4 private
+   documents, as an iCloud backup). Everything else goes to the **Trash** via Finder (never a
+   permanent delete), **only after** the Release holds every asset and `fetch_assets.sh`
+   downloads them with matching sha256. That includes:
+   - the 5.5 GB `.venv`, the 2.9 GB `UAV_node_ROS2.zip` (the code snapshot inside it is in git)
+   - duplicate zips/copies, `__MACOSX`, `build/install/log/__pycache__`
 
-   Việc này cũng giải phóng đĩa cho image Docker, vì ổ hiện chỉ còn ~30 GB trống.
-
----
-
-## 5. Config: một nguồn sự thật duy nhất
-
-- `uav_core.config.MissionConfig`: model pydantic v2 `frozen=True`. Giá trị mặc định là các hằng số
-  hiện tại (`DROP_ALTITUDE_MIN=3.05`, `ALIGN_PIXEL_THRESH=25`…).
-- `RulebookConfig` tách riêng, chỉ đọc: bảng điểm vòng loại/chung kết, kích thước sân, đường kính
-  vòng tròn.
-- Load từ YAML **một lần ở biên** (launch hoặc CLI), rồi **truyền tường minh** vào constructor.
-  Không ghi đè biến global, nên bẫy "phải load trước khi khởi tạo" (D6) biến mất.
-- **Validator fail-fast:** `drop_altitude_min < 3.05` gây lỗi lúc khởi động, không tự sửa ngầm giữa
-  trận như REQ-NF-04 cũ. Lý do: config sai phải bị phát hiện trên mặt đất.
-- `docs/config-reference.md` sinh từ schema (tên, mặc định, đơn vị, mô tả, nguồn luật). CI fail nếu
-  file lệch với schema. Cơ chế này thay cho quy tắc tay "sửa cả config.yaml lẫn README" của CLAUDE.md cũ.
+   This also frees disk space for the Docker images, since the drive has only ~30 GB free.
 
 ---
 
-## 6. `uav_core`: tách `mission.py`
+## 5. Config: a single source of truth
 
-### Hợp đồng dữ liệu (`types.py`, đều là dataclass `frozen`)
+- `uav_core.config.MissionConfig`: a pydantic v2 model with `frozen=True`. Defaults are the
+  current constants (`DROP_ALTITUDE_MIN=3.05`, `ALIGN_PIXEL_THRESH=25`, …).
+- A separate, read-only `RulebookConfig`: qualifier/final scoring tables, field dimensions, circle
+  diameters.
+- Loaded from YAML **once at the boundary** (launch file or CLI), then **passed explicitly** to
+  constructors. No global overrides, so the "load before construction" trap (D6) disappears.
+- **Fail-fast validators:** `drop_altitude_min < 3.05` is a startup error, not a silent
+  mid-match correction like the legacy REQ-NF-04. Reason: a wrong config must be caught on the
+  ground.
+- `docs/config-reference.md` is generated from the schema (name, default, unit, description, rule
+  source). CI fails if the file drifts from the schema. This replaces the legacy CLAUDE.md manual
+  rule "update both config.yaml and README".
+
+---
+
+## 6. `uav_core`: splitting `mission.py`
+
+### Data contracts (`types.py`, all `frozen` dataclasses)
 
 ```python
 Detection(cls: TargetClass, color: Color | None, cx: float, cy: float, radius: float,
           bbox: tuple[float, float, float, float], fill_ratio: float, conf: float,
           edge_clipped: bool, z_vision_m: float | None)
 SensorSnapshot(stamp_s: float, fc_alt_m, tof_alt_m, vel_body_ms: tuple | None,
-               rpy_deg: tuple | None, rates_dps: tuple | None)   # mọi trường có thể None
+               rpy_deg: tuple | None, rates_dps: tuple | None)   # every field may be None
 FlightCommand(vx, vy, vz, yaw_rate_dps, yaw_lock, drop_ball, phase, action)  # body FRD
 MissionStatus(phase, score, penalties, balls_dropped, targets_done, alt_source, elapsed_s)
 ```
 
-### API cốt lõi
+### Core API
 
 ```python
 sm = MissionStateMachine(cfg: MissionConfig, rules: RulebookConfig, round: Round)
@@ -206,227 +214,244 @@ out = sm.step(t_s: float, detections: Sequence[Detection], sensors: SensorSnapsh
 sm.reset(); sm.skip_takeoff(); sm.signal_landed(); sm.start_match(t_s)
 ```
 
-- `step()` **không nhận ảnh** và không vẽ gì. HUD chuyển sang `uav_core.viz.hud`, dùng bởi
-  `hud_node` (tuỳ chọn) hoặc tool offline.
-- **Thời gian tính bằng giây** theo timestamp đầu vào (D5). Bỏ `fps_hint`. Mọi cửa sổ (phạt độ cao
-  5 s, cooldown thả 2 s, recovery, nới tilt 1.5 s) là timer theo `t_s`. Chạy đúng cả với sim time.
-- Mỗi phase là một module (`phases/takeoff.py`, `search.py`, `targeting.py`, `drop.py`,
-  `recovery.py`, `helipad.py`, `landing.py`). Hàm thuần dạng
+- `step()` **takes no image** and draws nothing. The HUD moves to `uav_core.viz.hud`, used by the
+  (optional) `hud_node` or by offline tools.
+- **Time is in seconds**, from the input timestamps (D5). `fps_hint` is gone. Every window
+  (5 s altitude penalty, 2 s drop cooldown, recovery, 1.5 s tilt relaxation) is a timer on `t_s`.
+  Works correctly with sim time too.
+- Each phase is its own module (`phases/takeoff.py`, `search.py`, `targeting.py`, `drop.py`,
+  `recovery.py`, `helipad.py`, `landing.py`): pure functions of the form
   `(ctx, inputs) -> (command, transition | None)`.
-- Trạng thái nội bộ có thể thay đổi nằm gọn trong `MissionStateMachine`; đầu vào và đầu ra luôn
-  bất biến.
-- Hình học (`_extract_geometry`, fill ratio, chặn trùng H_landing, màu HSV) chuyển sang
-  `uav_core.perception`. **Chỉ perception_node** gọi các hàm này, nên hết tính hai lần (D3).
+- Mutable internal state lives only inside `MissionStateMachine`; inputs and outputs are always
+  immutable.
+- Geometry (`_extract_geometry`, fill ratio, H_landing overlap suppression, HSV colour) moves to
+  `uav_core.perception`. **Only perception_node** calls these functions, so nothing is computed
+  twice (D3).
 
-### Giữ nguyên hành vi: characterization test **trước** khi refactor
+### Preserve behaviour: characterisation tests **before** refactoring
 
-1. Viết harness chạy `legacy/vision/mission.py` trên **các kịch bản có kịch bản sẵn**: frame render
-   bằng bộ synthetic của `dataset.py` cùng chuỗi cảm biến giả lập (cất cánh, căn chỉnh, thả, mất
-   mục tiêu, ToF nhiễu đột biến, F2 di động, hết giờ). Ghi lại chuỗi `FlightCommand` thành golden file.
-2. Code mới phải tái tạo golden (sai số nhỏ cho float), **trừ** những thay đổi có chủ đích được
-   ghi trong ADR: thời gian theo giây, config fail-fast. Với các thay đổi này, golden được cập nhật
-   kèm lý do trong commit.
-3. Unit test cho từng module. Coverage `uav_core` ≥ 80%. Dùng `hypothesis` cho `frames.py` (chuyển
-   đổi qua lại ra lại đúng giá trị ban đầu) và geometry (mask tròn tổng hợp với nhiều kích thước,
-   có cắt biên).
+1. Write a harness that runs `legacy/vision/mission.py` on **scripted scenarios**: frames rendered
+   with the `dataset.py` synthetic generator plus simulated sensor sequences (takeoff, alignment,
+   drop, target loss, ToF spikes, moving F2, timeout). Record the `FlightCommand` sequence as a
+   golden file.
+2. The new code must reproduce the golden (small float tolerance), **except** for deliberate
+   changes recorded in an ADR: time in seconds, fail-fast config. For those changes the golden is
+   updated with the reason in the commit.
+3. Unit tests for every module. `uav_core` coverage ≥ 80%. `hypothesis` for `frames.py`
+   (round-trip conversions return the original value) and for geometry (synthetic circular masks
+   of many sizes, including edge clipping).
 
 ---
 
 ## 7. ROS 2
 
-- **Phiên bản:** ROS 2 **Jazzy** + Gazebo **Harmonic**. Đây là cặp được hỗ trợ chính thức, có
-  `ros_gz`, `ardupilot_gazebo` và MAVROS bản binary ổn định.
-- **`uav_interfaces` (ament_cmake)** sửa D2. Gồm `Detection.msg`, `Detections.msg`
-  (`std_msgs/Header` chứa stamp lúc chụp frame), `FlightCommand.msg`, `MissionStatus.msg`. Service
-  dùng `std_srvs/Trigger`.
+- **Versions:** ROS 2 **Jazzy** + Gazebo **Harmonic** — the officially supported pairing, with
+  stable binary `ros_gz`, `ardupilot_gazebo` and MAVROS.
+- **`uav_interfaces` (ament_cmake)** fixes D2: `Detection.msg`, `Detections.msg` (`std_msgs/Header`
+  carrying the frame capture stamp), `FlightCommand.msg`, `MissionStatus.msg`. Services use
+  `std_srvs/Trigger`.
 - **`perception_node`:**
-  - Nguồn ảnh `input: topic | v4l2`. Chế độ `v4l2` tự đọc camera trên Pi để tránh copy ảnh qua DDS.
-  - Undistort bằng map tính sẵn (`initUndistortRectifyMap`).
-  - Backend `hailo | onnx | ultralytics` qua `edge.runtime`.
-  - Gọi `uav_core.perception` rồi publish `/perception/detections` (Reliable, depth 1) và
-    `/perception/debug_image` (giới hạn tần số, chỉ khi có subscriber).
-  - Lấy `f_px` từ `CameraInfo`.
+  - Image source `input: topic | v4l2`. In `v4l2` mode it reads the camera on the Pi directly, to
+    avoid copying images over DDS.
+  - Undistortion with precomputed maps (`initUndistortRectifyMap`).
+  - Backend `hailo | onnx | ultralytics` via `edge.runtime`.
+  - Calls `uav_core.perception`, then publishes `/perception/detections` (Reliable, depth 1) and
+    `/perception/debug_image` (rate-limited, only when someone subscribes).
+  - Takes `f_px` from `CameraInfo`.
 - **`mission_node`:**
-  - Subscribe `/perception/detections`, IMU, MAVROS (rel_alt, rangefinder, velocity_body, state,
-    extended_state).
-  - Đưa cảm biến vào `imu_sync` theo stamp. Gọi `sm.step()`. Publish `/mission/command`
-    (Reliable) và `/mission/status`.
-  - **Không subscribe ảnh.** Giữ watchdog 0.5 s, `/mission/reset`, `/mission/e_stop`.
-  - Đồng hồ trận bắt đầu ở cạnh lên ARM.
-  - `use_sim_time` hoạt động đúng nhờ thời gian theo stamp.
+  - Subscribes to `/perception/detections`, the IMU and MAVROS (rel_alt, rangefinder,
+    velocity_body, state, extended_state).
+  - Feeds sensors into `imu_sync` by stamp, calls `sm.step()`, publishes `/mission/command`
+    (Reliable) and `/mission/status`.
+  - **Does not subscribe to images.** Keeps the 0.5 s watchdog, `/mission/reset`, `/mission/e_stop`.
+  - The match clock starts on the ARM rising edge.
+  - `use_sim_time` works because time comes from stamps.
 - **`action_node`:**
-  - Chuyển `FlightCommand` (body FRD) sang lệnh MAVROS bằng **một hàm duy nhất trong
-    `uav_core.frames`**. Gửi qua `/mavros/setpoint_raw/local` (`PositionTarget`, khung body,
-    type_mask chỉ dùng vận tốc + yaw rate), để khung tọa độ được khai báo rõ thay vì phụ thuộc
-    tham số `mav_frame`.
-  - Giữ GUIDED gate. Servo thả qua `MAV_CMD_DO_SET_SERVO`.
-  - Xử lý D7: viết test cho phép đổi khung, rồi xác nhận bằng SITL. Nếu SITL chứng minh code cũ sai
-    dấu, ghi vào báo cáo như một bug thật mà mô phỏng đã bắt được.
-- **`bno080_node`:** giữ như cũ, mặc định 50 Hz (theo feedback cũ về tải I2C).
-- **Launch:** `real.launch.py`, `sim.launch.py`, `hil.launch.py`. Cùng một bộ node, chỉ khác params.
-- **Test:** `launch_testing` cho chuỗi detections giả → mission_node → command. Test chuyển khung cho
-  action_node. Dùng `colcon test` trong CI.
+  - Converts `FlightCommand` (body FRD) into MAVROS commands with **a single function in
+    `uav_core.frames`**. Sends via `/mavros/setpoint_raw/local` (`PositionTarget`, body frame,
+    type_mask using velocity + yaw rate only), so the frame is declared explicitly instead of
+    depending on the `mav_frame` parameter.
+  - Keeps the GUIDED gate. The drop servo uses `MAV_CMD_DO_SET_SERVO`.
+  - Handles D7: write tests for the frame conversion, then confirm in SITL. If SITL proves the
+    legacy code had the wrong signs, the report records it as a real bug caught by simulation.
+- **`bno080_node`:** as before, 50 Hz by default (per the old feedback about I2C load).
+- **Launch:** `real.launch.py`, `sim.launch.py`, `hil.launch.py` — the same nodes, different params.
+- **Tests:** `launch_testing` for fake detections → mission_node → command, plus frame-conversion
+  tests for action_node. `colcon test` runs in CI.
 
 ---
 
-## 8. Mô phỏng (Gazebo Harmonic + ArduPilot SITL)
+## 8. Simulation (Gazebo Harmonic + ArduPilot SITL)
 
-- **Môi trường:** `docker/sim.Dockerfile` (Ubuntu 24.04, multi-arch arm64/amd64): ROS 2 Jazzy,
-  Gazebo Harmonic, ArduCopter SITL (pin một tag Copter-4.x ổn định lúc bootstrap),
-  `ardupilot_gazebo`, MAVROS. `compose.yaml` gồm các service `sim`, `stack`, `novnc` (tuỳ chọn, để
-  quay video). Chạy lockstep: render chậm chỉ làm hệ số thời gian thực (RTF) giảm, vòng điều khiển
-  vẫn đúng.
+- **Environment:** `docker/sim.Dockerfile` (Ubuntu 24.04, multi-arch arm64/amd64): ROS 2 Jazzy,
+  Gazebo Harmonic, ArduCopter SITL (pinned to a stable Copter-4.x tag at bootstrap),
+  `ardupilot_gazebo`, MAVROS. `compose.yaml` has the services `sim`, `stack` and `novnc`
+  (optional, for recording video). Runs in lockstep: slow rendering only lowers the real-time
+  factor (RTF); the control loop stays correct.
 - **World `competition_field.sdf.jinja`:**
-  - Sàn 24 × 12 m, Safe Zone 12 × 3.5 m có helipad H.
-  - 5 vòng tròn mục tiêu theo luật: đỏ 1.0 m ×2, vàng 0.6 m ×2, xanh 0.4 m ×1, đặt trên bục 0.1 m.
-  - Cổng TZ: vòng trong 1.6 m, tâm cao 1.7 m, có contact sensor.
-  - Ánh sáng và vật liệu là tham số.
-- **Drone:** `iris_downcam` = iris của `ardupilot_gazebo` cộng camera nhìn xuống 640 × 480, FOV và hệ
-  số méo lấy gần với IMX219 góc rộng. Như vậy pipeline undistort cũng được kiểm tra trong sim.
-- **Node trong `uav_sim`:**
-  - `target_mover`: F2 di chuyển 0.1 m/s ở chế độ chung kết, qua service `set_pose`.
-  - `ball_dropper`: theo dõi `/mavros/rc/out` trên kênh servo; khi PWM vượt ngưỡng thì spawn quả bóng
-    có vật lý tại vị trí drone. Nhờ đó `action_node` giữ nguyên hành vi như khi bay thật.
-  - `sim_referee`: chấm điểm **độc lập** với điểm tự báo của mission, dựa trên pose thật từ Gazebo:
-    - cất cánh ≥ 3.0 m
-    - bóng rơi trong bán kính vòng
-    - phạt độ cao < 3.0 m quá 5 s
-    - ra khỏi biên quá 5 s
-    - va chạm TZ
-    - hạ cánh trong helipad
-    - giới hạn 300 s
+  - 24 × 12 m floor, 12 × 3.5 m Safe Zone with the H helipad.
+  - 5 target circles per the rules: red 1.0 m ×2, yellow 0.6 m ×2, blue 0.4 m ×1, on 0.1 m plinths.
+  - TZ gate: 1.6 m inner ring, centre 1.7 m high, with a contact sensor.
+  - Lighting and materials are parameters.
+- **Drone:** `iris_downcam` = the `ardupilot_gazebo` iris plus a 640 × 480 downward camera whose
+  FOV and distortion approximate the wide-angle IMX219, so the undistortion pipeline is exercised
+  in sim too.
+- **Nodes in `uav_sim`:**
+  - `target_mover`: moves F2 at 0.1 m/s in finals mode, through the `set_pose` service.
+  - `ball_dropper`: watches `/mavros/rc/out` on the servo channel; when the PWM crosses the
+    threshold it spawns a physical ball at the drone's position. `action_node` therefore behaves
+    exactly as in real flight.
+  - `sim_referee`: scores **independently** of the mission's self-reported score, from Gazebo
+    ground-truth poses:
+    - takeoff ≥ 3.0 m
+    - ball lands inside the circle radius
+    - penalty for < 3.0 m altitude longer than 5 s
+    - out of bounds longer than 5 s
+    - TZ collisions
+    - landing inside the helipad
+    - 300 s limit
 
-    Ghi `results/<run_id>.json`.
-  - `scenario_runner`: từ seed, sinh vị trí mục tiêu không chồng lên nhau, ánh sáng (hướng/cường độ),
-    tông màu sàn, gió (`SIM_WIND_SPD/DIR`), nhiễu cảm biến (tham số SITL), vòng loại hoặc chung kết.
-- **Monte Carlo:** `scripts/run_monte_carlo.sh` chạy N lượt headless. Báo cáo gồm tỉ lệ thành công
-  (đủ 5 lần thả và hạ cánh trong ≤ 300 s), phân bố điểm (tối đa 200), phân loại lỗi (mất mục tiêu,
-  thả trượt, phạt độ cao, hết giờ…), và so điểm referee với điểm mission tự báo.
+    Writes `results/<run_id>.json`.
+  - `scenario_runner`: from a seed, generates non-overlapping target positions, lighting
+    (direction/intensity), floor tint, wind (`SIM_WIND_SPD/DIR`), sensor noise (SITL params),
+    qualifier or final round.
+- **Monte Carlo:** `scripts/run_monte_carlo.sh` runs N headless runs. The report gives the success
+  rate (all 5 drops and a landing within 300 s), the score distribution (max 200), a failure
+  taxonomy (target lost, missed drop, altitude penalty, timeout, …) and referee vs. self-reported
+  scores.
 
 ---
 
 ## 9. Hardware-in-the-loop (Pi 5 + Hailo-8L)
 
-- **Mac:** Gazebo + SITL. **Pi 5:** MAVROS + perception (backend Hailo) + mission + action. Cách chia
-  này giống hệt lúc bay thật, khi Pi nói chuyện với FC qua MAVLink. MAVROS trên Pi nối tới SITL qua UDP.
-- **Ảnh từ Gazebo sang Pi:** `image_transport` dạng compressed (JPEG) qua **cáp Ethernet trực tiếp**.
-  Cyclone DDS cấu hình unicast peer. Đo **riêng** độ trễ thêm do truyền ảnh để không lẫn vào latency
-  của perception.
-- **Pi:** Raspberry Pi OS Bookworm làm host (Hailo hỗ trợ chính thức) và `docker/pi.Dockerfile`
-  (`ros:jazzy` + HailoRT), truyền `--device /dev/hailo0` vào container. **Phiên bản HailoRT trong
-  container phải khớp chính xác driver PCIe trên host**; pin cả hai.
+- **Mac:** Gazebo + SITL. **Pi 5:** MAVROS + perception (Hailo backend) + mission + action. This
+  split is identical to real flight, where the Pi talks MAVLink to the FC. MAVROS on the Pi
+  connects to SITL over UDP.
+- **Images from Gazebo to the Pi:** compressed (JPEG) `image_transport` over a **direct Ethernet
+  cable**, with Cyclone DDS configured for unicast peers. The extra latency of image transport is
+  measured **separately** so it is not mixed into perception latency.
+- **Pi:** Raspberry Pi OS Bookworm as the host (officially supported by Hailo) plus
+  `docker/pi.Dockerfile` (`ros:jazzy` + HailoRT), with `--device /dev/hailo0` passed into the
+  container. **The HailoRT version in the container must exactly match the PCIe driver on the
+  host**; pin both.
 
 ---
 
 ## 10. CV / ML
 
-### Dữ liệu và giao thức đánh giá (sửa D8)
+### Data and evaluation protocol (fixes D8)
 
-- **Ba miền dữ liệu:**
-  1. synthetic procedural (`uav_ml.synth`, từ `dataset.py`)
-  2. **render từ Gazebo, tự gán nhãn** từ pose đã biết (thêm vào `uav_sim`)
-  3. ảnh thật
-- **Ảnh thật:** hiện có 286 ảnh có nhãn; trong 300 frame của `real-frames-300.zip` chỉ **14 frame**
-  chưa có nhãn (kiểm kê M0). Muốn tăng đáng kể lượng ảnh thật thì phải **quay thêm** video mới,
-  sau đó model hiện tại gợi ý nhãn và sửa tay trên Roboflow.
-- **Chia train/val/test theo phiên quay/video nguồn**, không chia ngẫu nhiên theo frame, để các frame
-  liền nhau gần giống hệt không rơi vào cả train lẫn test. Lưu ý: 300 frame hiện có đánh số liên
-  tục `real_frame_0000–0299`, nhiều khả năng từ một hoặc rất ít video; nếu đúng vậy thì chia theo
-  **khối thời gian liền nhau**, không chia theo frame. Tập test được **đóng băng**: danh sách
-  file và sha256 commit trong `ml/configs/splits/`.
-- **Chỉ số:** mask mAP50-95, Boundary F1 (2 px), Hausdorff, circularity, độ chính xác phân loại màu.
-  Có **bootstrap 95% CI**, vì tập test thật nhỏ.
+- **Three data domains:**
+  1. procedural synthetic (`uav_ml.synth`, from `dataset.py`)
+  2. **Gazebo renders, auto-labelled** from known poses (added to `uav_sim`)
+  3. real images
+- **Real images:** 286 labelled images exist today; of the 300 frames in `real-frames-300.zip`
+  only **14** are unlabelled (M0 inventory). A meaningful increase in real data requires
+  **recording new video**; the current model then proposes labels that are corrected by hand on
+  Roboflow.
+- **Split train/val/test by recording session / source video**, not randomly by frame, so that
+  near-identical consecutive frames never land in both train and test. Note: the existing 300
+  frames are numbered consecutively `real_frame_0000–0299`, probably from one or very few videos;
+  if so, split into **contiguous time blocks**, not by frame. The test set is **frozen**: the file
+  list and sha256 values are committed in `ml/configs/splits/`.
+- **Metrics:** mask mAP50-95, Boundary F1 (2 px), Hausdorff, circularity, colour classification
+  accuracy, all with **bootstrap 95% CIs**, since the real test set is small.
 
-### Các thí nghiệm
+### Experiments
 
-| ID | Câu hỏi | Thiết kế |
+| ID | Question | Design |
 |---|---|---|
-| E1 | Cần bao nhiêu nhãn thật? (sim-to-real) | Train theo các tổ hợp {synth, gazebo, synth+gazebo} × {0, 25, 50, 100 %} lượng ảnh thật, thêm pretrain-synth → fine-tune-real. Vẽ đường cong theo lượng nhãn |
-| E2 | Boundary/Dice loss tự viết có giúp ích không? | Baseline / +boundary / +Dice / +cả hai, mỗi cấu hình 3 seed, báo mean ± std. Báo cáo cả kết quả âm |
-| E3 | Model nào cho đánh đổi tốt nhất trên Hailo-8L? | YOLO11n-seg, YOLO11s-seg, YOLOv8n-seg (Hailo Model Zoo hỗ trợ chính thức), và model seg mới nhất của Ultralytics lúc làm nếu compile được. Vẽ Pareto accuracy–latency |
-| E4 | Kiểm chứng "Danger Zones" cũ | INT8 calibrate bằng frame thật vs frame synthetic; `mask_ratio` 4 vs 2 (FPS và băng thông PCIe). Biến các giả định trong CLAUDE.md cũ thành số đo |
+| E1 | How many real labels are needed? (sim-to-real) | Train on {synth, gazebo, synth+gazebo} × {0, 25, 50, 100 %} of the real images, plus pretrain-synth → fine-tune-real. Plot against label count |
+| E2 | Does the custom boundary/Dice loss help? | Baseline / +boundary / +Dice / +both, 3 seeds each, report mean ± std. Negative results are reported too |
+| E3 | Which model gives the best trade-off on the Hailo-8L? | YOLO11n-seg, YOLO11s-seg, YOLOv8n-seg (officially supported by the Hailo Model Zoo), and Ultralytics' newest seg model at the time if it compiles. Plot the accuracy–latency Pareto front |
+| E4 | Test the legacy "Danger Zones" | INT8 calibrated on real vs. synthetic frames; `mask_ratio` 4 vs 2 (FPS and PCIe bandwidth). Turn the legacy CLAUDE.md assumptions into measurements |
 
-- **Compute:** smoke test trên MPS của Mac. Các lượt train nhiều seed chạy trên GPU Colab/Kaggle.
-  Mọi lượt chạy tái tạo được từ `ml/configs/*.yaml` + seed; kết quả là CSV, hình vẽ sinh bằng script.
+- **Compute:** smoke tests on the Mac's MPS; multi-seed training runs on Colab/Kaggle GPUs. Every
+  run is reproducible from `ml/configs/*.yaml` + seed; results are CSV and figures are generated by
+  scripts.
 
 ---
 
 ## 11. Edge (Hailo-8L)
 
-- **Compile:** ONNX → Hailo DFC (parse → optimize với tập calib thật → compile `.hef`) trong
-  notebook `edge/hailo/compile.ipynb` chạy trên **Colab x86**. DFC không chạy được trên Mac M1.
-  **Chủ dự án phải tự tải wheel DFC** từ Hailo Developer Zone (cần tài khoản).
-  - Dự phòng: nếu YOLO11-seg dính op không hỗ trợ, dùng YOLOv8n-seg (đã nằm sẵn trong E3).
-- **Runtime:** `edge.runtime.hailo` dùng HailoRT async `InferModel`. Hậu xử lý mask (proto ×
-  coeffs, mask_ratio 4) bằng numpy trên CPU. Ba backend dùng cùng một interface
-  `infer(frame) -> list[RawInstance]`.
-- **Benchmark trên Pi 5:**
-  - Latency từng tầng p50/p95/p99: chụp, tiền xử lý, NPU, hậu xử lý, hình học, `sm.step`, publish.
-  - FPS end-to-end; %CPU.
-  - Nhiệt độ và throttling khi chạy liên tục 10 phút.
-  - So Hailo INT8 với ONNX CPU trên chính Pi 5.
-  - Điện năng: tuỳ chọn, nếu có đồng hồ đo USB-C.
-- **Kiểm chứng số liệu cũ:** con số "~2 ms inference" trong README cũ chưa từng được đo; thay bằng số đo.
+- **Compile:** ONNX → Hailo DFC (parse → optimise with the real calibration set → compile `.hef`)
+  in the notebook `edge/hailo/compile.ipynb`, run on **Colab x86**; DFC does not run on the M1 Mac.
+  **The owner must download the DFC wheel** from the Hailo Developer Zone (account required).
+  - Fallback: if YOLO11-seg hits an unsupported op, use YOLOv8n-seg (already part of E3).
+- **Runtime:** `edge.runtime.hailo` uses the HailoRT async `InferModel`. Mask post-processing
+  (proto × coeffs, mask_ratio 4) runs in numpy on the CPU. All three backends share one
+  interface: `infer(frame) -> list[RawInstance]`.
+- **Benchmarks on the Pi 5:**
+  - Per-stage latency p50/p95/p99: capture, pre-processing, NPU, post-processing, geometry,
+    `sm.step`, publish.
+  - End-to-end FPS; CPU %.
+  - Temperature and throttling over 10 minutes of continuous running.
+  - Hailo INT8 vs. ONNX on the Pi 5's own CPU.
+  - Power: optional, if a USB-C meter is available.
+- **Check the legacy numbers:** the "~2 ms inference" in the legacy README was never measured;
+  replace it with a measurement.
 
 ---
 
-## 12. Tài liệu và trình bày
+## 12. Documentation and presentation
 
-- **README (EN):**
-  - một đoạn giới thiệu
-  - GIF demo (sim + HIL)
-  - **bảng kết quả** với các con số của mục 1
-  - sơ đồ kiến trúc (mermaid)
-  - quickstart `docker compose up sim`
-  - bản đồ repo
-  - mục **Limitations** viết trung thực (không bay thật; tập test thật nhỏ)
-- **Báo cáo kỹ thuật** `docs/report/` (Markdown → PDF, khoảng 8–10 trang): bài toán, hệ thống, E1–E4,
-  kết quả vòng kín và HIL, hạn chế. Có thể đăng thành blog hoặc arXiv sau.
-- **ADR:** chuyển 10 "Architecture Decisions" của CLAUDE.md cũ thành `docs/decisions/`, cộng các
-  quyết định mới (thời gian theo giây, config fail-fast, chia khung trong `frames.py`, Jazzy/Harmonic, MAVROS).
-- `CLAUDE.md` của repo viết lại theo cấu trúc mới.
-- Video demo quay qua noVNC/Gazebo GUI, đăng YouTube và nhúng link.
+- **README:**
+  - a one-paragraph introduction
+  - demo GIF (sim + HIL)
+  - **results table** with the numbers from section 1
+  - architecture diagram (mermaid)
+  - `docker compose up sim` quickstart
+  - repo map
+  - an honest **Limitations** section (no real flight; small real test set)
+- **Technical report** `docs/report/` (Markdown → PDF, about 8–10 pages): problem, system, E1–E4,
+  closed-loop and HIL results, limitations. Can later become a blog post or an arXiv preprint.
+- **ADRs:** migrate the 10 "Architecture Decisions" of the legacy CLAUDE.md into `docs/decisions/`,
+  plus the new decisions (time in seconds, fail-fast config, frame handling in `frames.py`,
+  Jazzy/Harmonic, MAVROS).
+- Rewrite the repo's `CLAUDE.md` for the new structure.
+- Demo video recorded via noVNC/Gazebo GUI, published on YouTube and linked.
 
 ---
 
-## 13. Các mốc (8 tuần, một người; có chồng lấn)
+## 13. Milestones (8 weeks, one person, overlapping)
 
-Spec này quá lớn cho một plan duy nhất. Mỗi mốc có **plan riêng** trong `docs/superpowers/plans/`,
-viết khi bắt đầu mốc đó. Plan đầu tiên gộp M0 + M1, vì mọi mốc sau đều phụ thuộc vào `uav_core` và
-`uav_interfaces`.
+This spec is too large for one plan. Each milestone gets **its own plan** in
+`docs/superpowers/plans/`, written when that milestone starts. The first plan combines M0 + M1,
+because every later milestone depends on `uav_core` and `uav_interfaces`.
 
-| Mốc | Tuần | Đầu ra | Hoàn thành khi |
+| Milestone | Weeks | Deliverables | Done when |
 |---|---|---|---|
-| M0 Bootstrap | 1 | import legacy, `.gitignore`, Release assets + `fetch_assets.sh`, pre-commit, CI (ruff + pytest), dọn `~/Documents` (sau khi được duyệt) | CI xanh trên `main`, asset tải về khớp sha256 |
-| M1 Core | 1–3 | characterization golden → `uav_core` + config + frames + test; `uav_interfaces` + node mới + launch_testing; xoá `legacy/vision/mission.py` và `legacy/ros2` | golden khớp; coverage ≥ 80%; `colcon build && colcon test` xanh |
-| M2 Sim | 2–4 | image Docker, world, iris_downcam, ball_dropper, referee, lượt kín vòng đầu tiên; xử lý D7 | 1 lượt vòng loại đi hết từ cất cánh tới hạ cánh trong sim, có JSON referee |
-| M3 ML | 3–5 | gán nhãn + chia tập, ảnh Gazebo tự gán nhãn, E1–E3 | tập test đóng băng; bảng E1–E3 có CI |
-| M4 Edge | 4–6 | `.hef`, backend Hailo, benchmark, E4 | bảng latency p50/p95/p99 trên Pi 5; ≥ 20 Hz hoặc ghi rõ lý do không đạt |
-| M5 HIL + MC | 6–7 | `hil.launch.py`, Ethernet + DDS, Monte Carlo N ≥ 50 (sim) và N ≥ 10 (HIL) | tỉ lệ thành công + phân loại lỗi trong `results/` |
-| M6 Trình bày | 7–8 | README, báo cáo, video, ADR, xoá các phần legacy còn lại | README có bảng số thật; báo cáo PDF; video công khai |
+| M0 Bootstrap | 1 | legacy import, `.gitignore`, Release assets + `fetch_assets.sh`, pre-commit, CI (ruff + pytest), `~/Documents` cleanup (after approval) | CI green on `main`, downloaded assets match sha256 |
+| M1 Core | 1–3 | characterisation golden → `uav_core` + config + frames + tests; `uav_interfaces` + new nodes + launch_testing; delete `legacy/vision/mission.py` and `legacy/ros2` | golden matches; coverage ≥ 80%; `colcon build && colcon test` green |
+| M2 Sim | 2–4 | Docker image, world, iris_downcam, ball_dropper, referee, first closed-loop run; resolve D7 | one qualifier run goes from takeoff to landing in sim, with referee JSON |
+| M3 ML | 3–5 | labelling + splits, auto-labelled Gazebo images, E1–E3 | frozen test set; E1–E3 tables with CIs |
+| M4 Edge | 4–6 | `.hef`, Hailo backend, benchmarks, E4 | p50/p95/p99 latency table on the Pi 5; ≥ 20 Hz or a documented reason why not |
+| M5 HIL + MC | 6–7 | `hil.launch.py`, Ethernet + DDS, Monte Carlo N ≥ 50 (sim) and N ≥ 10 (HIL) | success rate + failure taxonomy in `results/` |
+| M6 Presentation | 7–8 | README, report, video, ADRs, delete the remaining legacy parts | README with real numbers; PDF report; public video |
 
 ---
 
-## 14. Rủi ro và cách giảm
+## 14. Risks and mitigations
 
-| Rủi ro | Cách giảm |
+| Risk | Mitigation |
 |---|---|
-| Render camera của Gazebo trong Docker trên M1 quá chậm (không có GPU) | Lockstep vẫn đúng; giảm độ phân giải/tần số camera; dự phòng chạy MC trên VM x86 cloud (dùng chung với Hailo DFC) |
-| Hailo DFC cần x86 + tài khoản Hailo | Notebook Colab; chủ dự án tự tải wheel |
-| YOLO11-seg dùng op mà Hailo không hỗ trợ | YOLOv8n-seg làm phương án dự phòng (nằm sẵn trong E3) |
-| HailoRT trong container lệch phiên bản driver host | Pin phiên bản cả hai; script kiểm tra lúc khởi động container |
-| Tập test thật nhỏ (khoảng vài trăm ảnh) | Bootstrap CI; chia theo video; ghi rõ trong Limitations |
-| Phiên bản SITL/Gazebo/MAVROS thay đổi | Pin trong Dockerfile; tag image theo ngày |
-| Đĩa Mac còn ~33 GB, image sim khoảng 8–10 GB | Dọn `~/Documents` ở M0; `docker system prune` định kỳ |
-| Refactor làm hỏng hành vi đã có | Characterization golden test làm trước (mục 6) |
+| Gazebo camera rendering in Docker on the M1 is too slow (no GPU) | Lockstep stays correct; lower camera resolution/rate; fall back to running MC on a cloud x86 VM (shared with the Hailo DFC) |
+| Hailo DFC needs x86 + a Hailo account | Colab notebook; the owner downloads the wheel |
+| YOLO11-seg uses an op the Hailo does not support | YOLOv8n-seg as the fallback (already in E3) |
+| HailoRT in the container mismatches the host driver | Pin both versions; a check script at container start |
+| Small real test set (a few hundred images) | Bootstrap CIs; split by video; stated in Limitations |
+| SITL/Gazebo/MAVROS versions change | Pin in the Dockerfile; tag images by date |
+| ~30 GB free on the Mac, sim image about 8–10 GB | Clean `~/Documents` in M0; periodic `docker system prune` |
+| Refactoring breaks existing behaviour | Characterisation golden tests first (section 6) |
 
 ---
 
-## 15. Tiêu chí hoàn thành toàn dự án
+## 15. Project-wide done criteria
 
-1. CI xanh trên `main`: ruff, import-linter, pytest (coverage `uav_core` ≥ 80%), `colcon test`,
-   kiểm tra `config-reference.md` khớp schema.
-2. Sim: N ≥ 50 lượt ngẫu nhiên, báo tỉ lệ thành công và điểm trung bình **do referee độc lập chấm**.
-3. HIL: ít nhất 10 lượt với perception chạy trên Hailo-8L; latency vòng kín được đo và báo cáo.
-4. ML: tập test thật đóng băng; E1–E4 có kết quả kèm seed/CI, kể cả kết quả âm.
-5. README có GIF demo và bảng số thật; báo cáo kỹ thuật PDF; không còn khẳng định nào chưa được đo.
+1. CI green on `main`: ruff, import-linter, pytest (`uav_core` coverage ≥ 80%), `colcon test`, and
+   the check that `config-reference.md` matches the schema.
+2. Sim: N ≥ 50 randomised runs, reporting the success rate and mean score **as judged by the
+   independent referee**.
+3. HIL: at least 10 runs with perception on the Hailo-8L; closed-loop latency measured and reported.
+4. ML: frozen real test set; E1–E4 results with seeds/CIs, negative results included.
+5. README with a demo GIF and real numbers; a PDF technical report; no unmeasured claims left.
