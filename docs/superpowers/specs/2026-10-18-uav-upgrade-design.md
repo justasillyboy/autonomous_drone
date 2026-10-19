@@ -232,6 +232,30 @@ sm.reset(); sm.skip_takeoff(); sm.signal_landed(); sm.start_match(t_s)
   `uav_core.perception`. **Only perception_node** calls these functions, so nothing is computed
   twice (D3).
 
+### As built (M1, 2026-10-19)
+
+The port matches the legacy command sequence bit-exactly, which forced a few departures from
+the contracts above:
+
+- `Detection.cx/cy/radius/bbox` are `int`, because the legacy code truncates them. There is no
+  `z_vision_m`: the mission computes the vision altitude itself.
+- `SensorSnapshot` has flat optional fields (`fc_alt_m`, `tof_alt_m`, `of_vx_ms`, `of_vy_ms`,
+  `pitch/roll/yaw_deg`, `pitch/roll_rate_dps`) instead of tuples.
+- Perception applies the fill-ratio and H_landing overlap filters and the colour. The mission
+  applies the diameter cap (fire phase only), the scored-zone exclusion, the altitude chain and
+  the colour match. Semicircles are dropped, since nothing consumes them.
+- There is no `landing.py`: `helipad.py` also handles `LANDING`. Phase functions update a
+  `MissionContext` owned by the state machine, which runs them in the legacy order.
+- The golden scenes come from a dedicated pinhole renderer (`tests/characterisation/scene.py`),
+  not from `dataset.py`, for exact control of the geometry.
+- Legacy quirks kept for now; each will be fixed with a golden update and an ADR:
+  - the last vision altitude is updated for every unclipped circle, before the colour check,
+    using the current target's diameter
+  - the scored-zone check uses the previous circle's altitude
+  - recovery has no diameter cap, so an oversized red disc makes it oscillate
+  - the geofence override discards `drop_ball`
+  - descending below 3 m while landing counts toward the altitude penalty
+
 ### Preserve behaviour: characterisation tests **before** refactoring
 
 1. Write a harness that runs `legacy/vision/mission.py` on **scripted scenarios**: frames rendered
