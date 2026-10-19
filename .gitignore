@@ -11,13 +11,15 @@
 
 # Private material (competition rulebook, internal docx) — never published
 docs/private/
+/private/
 
 # Data and training outputs
 data/
 runs/
 
-# Python
-.venv/
+# Python. `.venv` is a symlink to `.venv.nosync` so iCloud skips the environment.
+.venv
+*.nosync
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -25,6 +27,10 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+.hypothesis/
+
+# Local scratch work
+.wip/
 
 # ROS 2 / colcon
 build/

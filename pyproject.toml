@@ -1,0 +1,59 @@
+[project]
+name = "autonomous-drone"
+version = "0.0.0"
+description = "Workspace root for the autonomous fire-fighting UAV (not a package)"
+requires-python = ">=3.12"
+dependencies = ["uav-core"]
+
+[tool.uv]
+package = false
+python-preference = "only-managed"
+
+[tool.uv.sources]
+uav-core = { workspace = true }
+
+[tool.uv.workspace]
+members = ["uav_core"]
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.170",
+    "import-linter>=2.15",
+    "pre-commit>=4.7",
+    "pytest>=9.1",
+    "pytest-cov>=7.1",
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["legacy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+# "." must not be on pythonpath: the uav_core/ folder would shadow the installed package.
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+pythonpath = ["uav_core/tests"]
+testpaths = ["uav_core/tests"]
+
+[tool.coverage.run]
+source = ["uav_core/src"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
+
+[tool.importlinter]
+root_packages = ["uav_core"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "uav_core stays free of ROS and ML frameworks"
+type = "forbidden"
+source_modules = ["uav_core"]
+forbidden_modules = ["rclpy", "torch", "ultralytics"]

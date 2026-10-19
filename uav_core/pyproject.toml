@@ -1,0 +1,18 @@
+[project]
+name = "uav-core"
+version = "0.1.0"
+description = "Perception, estimation, control and mission logic for the UAV, free of ROS"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.8,<5",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/uav_core"]

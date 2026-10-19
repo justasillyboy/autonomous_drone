@@ -1,0 +1,55 @@
+import dataclasses
+import math
+
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
+from uav_core.frames import (
+    body_frd_to_flu,
+    cos_sin_deg,
+    flu_to_body_frd,
+    rotate,
+    rotate_inverse,
+    wrap_deg,
+)
+from uav_core.types import FlightCommand, Phase, SensorSnapshot
+
+finite = st.floats(min_value=-1e3, max_value=1e3, allow_nan=False)
+angle = st.floats(min_value=-720.0, max_value=720.0, allow_nan=False)
+
+
+def test_contracts_are_immutable():
+    cmd = FlightCommand(phase=Phase.TAKEOFF, action="ASCEND", vz=-0.8)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        cmd.vz = 0.0  # type: ignore[misc]
+    assert SensorSnapshot().fc_alt_m is None
+
+
+def test_frd_to_flu_flips_lateral_vertical_and_yaw():
+    vx, vy, vz, yaw = body_frd_to_flu(1.0, 2.0, 0.5, 90.0)
+    assert (vx, vy, vz) == (1.0, -2.0, -0.5)
+    assert yaw == pytest.approx(-math.pi / 2)
+
+
+@given(finite, finite, finite, finite)
+def test_frd_flu_round_trip(vx, vy, vz, yaw):
+    back = flu_to_body_frd(*body_frd_to_flu(vx, vy, vz, yaw))
+    assert back == pytest.approx((vx, vy, vz, yaw), abs=1e-9)
+
+
+@given(angle)
+def test_wrap_deg_range(a):
+    w = wrap_deg(a)
+    assert -180.0 <= w < 180.0
+    assert math.isclose(math.cos(math.radians(w)), math.cos(math.radians(a)), abs_tol=1e-9)
+
+
+@given(finite, finite, angle)
+def test_rotate_then_inverse_is_identity(x, y, a):
+    c, s = cos_sin_deg(a)
+    assert rotate_inverse(*rotate(x, y, c, s), c, s) == pytest.approx((x, y), abs=1e-6)
+
+
+def test_rotate_90_clockwise_turns_forward_into_right():
+    c, s = cos_sin_deg(90.0)
+    assert rotate(1.0, 0.0, c, s) == pytest.approx((0.0, 1.0), abs=1e-12)
