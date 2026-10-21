@@ -40,3 +40,7 @@ log/
 # OS / editor
 .DS_Store
 __MACOSX/
+
+# Local experiment dumps (large binaries and generated files; not part of the repo)
+/fixed_yolo_circle_seg/
+/yolo_circle_seg/
