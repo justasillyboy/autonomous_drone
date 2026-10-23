@@ -46,6 +46,10 @@ class PidGains(_Section):
 
 
 class PerceptionConfig(_Section):
+    """Filters applied to segmentation masks before the mission sees a detection.
+
+    Every colour needs at least one HSV range, each with 0 <= lo <= hi <= (180, 255, 255)."""
+
     fill_ratio_min_circle: float = _field(
         0.40,
         "ratio",
@@ -92,6 +96,8 @@ class PerceptionConfig(_Section):
 
 
 class CameraConfig(_Section):
+    """Downward camera intrinsics."""
+
     f_px: float = _field(
         500.0,
         "px",
@@ -102,6 +108,12 @@ class CameraConfig(_Section):
 
 
 class DropConfig(_Section):
+    """Ball-release window and attitude gate.
+
+    Cross-field checks: altitude_min_m >= 3.05 m (rulebook floor + margin);
+    altitude_min_m < altitude_target_m < altitude_max_m <= 5.0 m;
+    tilt_max_relaxed_deg >= max_pitch_deg."""
+
     altitude_min_m: float = _field(
         3.05,
         "m",
@@ -158,6 +170,8 @@ class DropConfig(_Section):
 
 
 class ControlConfig(_Section):
+    """Velocity commands and PID gains."""
+
     takeoff_alt_m: float = _field(
         3.3, "m", "Altitude that ends TAKEOFF", source="rulebook §VI (>= 3.0 m) + margin", ge=3.0
     )
@@ -186,6 +200,8 @@ class ControlConfig(_Section):
 
 
 class FeedforwardConfig(_Section):
+    """Moving-target feedforward (finals F2), disabled while the drone manoeuvres."""
+
     scale: float = _field(
         0.003, "m/s per px/s", "Target pixel velocity -> added drone velocity (finals F2)", ge=0.0
     )
@@ -205,6 +221,8 @@ class FeedforwardConfig(_Section):
 
 
 class TimingConfig(_Section):
+    """Time windows, in seconds of match time rather than frames (ADR-0001)."""
+
     first_step_dt_s: float = _field(
         1.0 / 30.0, "s", "Time step assumed for the very first step (legacy: 1 / fps_hint)", gt=0.0
     )
@@ -238,6 +256,8 @@ class TimingConfig(_Section):
 
 
 class EstimationConfig(_Section):
+    """Rangefinder filtering and camera/IMU synchronisation."""
+
     tof_window: int = _field(5, "samples", "ToF median window", ge=3)
     tof_spike_threshold_m: float = _field(
         1.5, "m", "ToF deviation from the median rejected as an obstacle spike", gt=0.0
@@ -252,6 +272,8 @@ class EstimationConfig(_Section):
 
 
 class HelipadConfig(_Section):
+    """Return to the Safe Zone, helipad approach and landing."""
+
     land_ratio: float = _field(
         0.70, "ratio", "Helipad box width / frame width that starts LANDING", gt=0.0, le=1.0
     )
@@ -273,6 +295,8 @@ class HelipadConfig(_Section):
 
 
 class GeofenceConfig(_Section):
+    """Soft fence kept inside the field nets."""
+
     x_min_m: float = _field(-1.0, "m", "Soft fence behind the takeoff point")
     margin_m: float = _field(1.0, "m", "Soft fence distance inside the far and side nets", ge=0.0)
     return_gain: float = _field(0.3, "1/s", "Proportional return gain", gt=0.0)
@@ -280,6 +304,8 @@ class GeofenceConfig(_Section):
 
 
 class MissionConfig(_Section):
+    """Everything the mission can tune; YAML top-level keys are these sections."""
+
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
     camera: CameraConfig = Field(default_factory=CameraConfig)
     drop: DropConfig = Field(default_factory=DropConfig)

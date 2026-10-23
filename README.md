@@ -36,6 +36,7 @@ scenarios (15,350 steps at 100 Hz), with 118 tests and 99 % line coverage.
 | `assets/` | Binary assets (weights, datasets, videos), not in git; only `SHA256SUMS` is tracked |
 | `scripts/fetch_assets.sh` | Downloads the assets from the GitHub Release and verifies their checksums |
 | `scripts/publish_assets.sh` | Uploads `assets/` to a GitHub Release (maintainers) |
+| `docs/config-reference.md` | Every mission config key with default, unit, range and rule source; generated from the schema, a test fails if it drifts |
 | `docs/superpowers/` | Design spec and implementation plans |
 
 ## Development

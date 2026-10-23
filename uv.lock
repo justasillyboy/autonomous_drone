@@ -837,6 +837,7 @@ name = "uav-core"
 version = "0.1.0"
 source = { editable = "uav_core" }
 dependencies = [
+    { name = "annotated-types" },
     { name = "numpy" },
     { name = "opencv-python-headless" },
     { name = "pydantic" },
@@ -845,6 +846,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "annotated-types", specifier = ">=0.6" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python-headless", specifier = ">=4.8,<5" },
     { name = "pydantic", specifier = ">=2.7" },
