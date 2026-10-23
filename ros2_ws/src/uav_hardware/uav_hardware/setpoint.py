@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from uav_core.frames import body_frd_to_flu
-from uav_core.types import FlightCommand
+from uav_core.types import FlightCommand, Phase
 
 FRAME_BODY_NED = 8  # mavros_msgs/PositionTarget.FRAME_BODY_NED
 IGNORE_PX, IGNORE_PY, IGNORE_PZ = 1, 2, 4
@@ -50,12 +50,27 @@ def fill_position_target(msg, sp: Setpoint):
     return msg
 
 
+@dataclass(frozen=True)
+class Actions:
+    """What action_node sends to the FC for one FlightCommand."""
+
+    setpoint: Setpoint | None = None
+    servo_pwm: int | None = None
+    takeoff_alt_m: float | None = None  # MAV_CMD_NAV_TAKEOFF via /mavros/cmd/takeoff
+    set_mode: str | None = None  # via /mavros/set_mode
+
+
 @dataclass
 class ActionGate:
     """Decides what reaches the flight controller.
 
-    - Not in GUIDED: no setpoint and, critically, no drop (a ball released while the pilot
-      flies manually lands anywhere). An unknown mode (no /mavros/state yet) blocks too.
+    - Not in GUIDED: nothing, and critically no drop (a ball released while the pilot flies
+      manually lands anywhere). An unknown mode (no /mavros/state yet) blocks too.
+    - Takeoff: ArduCopter ignores velocity setpoints while landed, so the first TAKEOFF
+      command while armed on the ground also requests MAV_CMD_NAV_TAKEOFF to takeoff_alt_m.
+    - Landing: once the mission is over the helipad and says LAND, the FC is switched to LAND
+      mode, which descends, detects touchdown and disarms (GUIDED velocity descent would sit
+      on the pad with motors spinning).
     - A drop is a PWM pulse: drop_pwm now, idle_pwm after pulse_s. The legacy node set the
       drop PWM and never returned to idle, so a release that needs a pulse fired only once.
     """
@@ -64,21 +79,35 @@ class ActionGate:
     drop_pwm: int = 1900
     idle_pwm: int = 1100
     pulse_s: float = 0.5
+    takeoff_alt_m: float = 3.3
     mode: str | None = None
+    armed: bool = False
+    on_ground: bool | None = None
     _release_at_s: float | None = None
+    _takeoff_sent: bool = False
+    _land_sent: bool = False
 
     def accepts_commands(self) -> bool:
         return not self.require_guided or self.mode == "GUIDED"
 
-    def on_command(self, cmd: FlightCommand, now_s: float) -> tuple[Setpoint | None, int | None]:
-        """(setpoint to publish, servo PWM to send now) for one FlightCommand."""
+    def on_command(self, cmd: FlightCommand, now_s: float) -> Actions:
         if not self.accepts_commands():
-            return None, None
+            return Actions()
         pwm = None
         if cmd.drop_ball and self._release_at_s is None:
             pwm = self.drop_pwm
             self._release_at_s = now_s + self.pulse_s
-        return to_setpoint(cmd), pwm
+        takeoff = None
+        if cmd.phase is Phase.TAKEOFF and self.armed and self.on_ground and not self._takeoff_sent:
+            takeoff, self._takeoff_sent = self.takeoff_alt_m, True
+        mode = None
+        if cmd.phase is Phase.LANDING and cmd.action == "LAND" and not self._land_sent:
+            mode, self._land_sent = "LAND", True
+        return Actions(to_setpoint(cmd), pwm, takeoff, mode)
+
+    def on_disarmed(self) -> None:
+        """A new flight (retry) may take off and land again."""
+        self._takeoff_sent = self._land_sent = False
 
     def on_tick(self, now_s: float) -> int | None:
         """Servo PWM to send when the pulse ends, else None."""

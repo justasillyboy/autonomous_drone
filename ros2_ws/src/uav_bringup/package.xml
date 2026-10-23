@@ -3,7 +3,7 @@
 <package format="3">
   <name>uav_bringup</name>
   <version>0.1.0</version>
-  <description>Launch files and parameters for the real drone (sim and HIL follow in M2/M5)</description>
+  <description>Launch files and parameters: real drone and closed-loop simulation (HIL follows in M5)</description>
   <maintainer email="thuyxn2006@gmail.com">Do Minh Hien</maintainer>
   <license>Apache-2.0</license>
 
@@ -13,6 +13,8 @@
   <exec_depend>uav_perception</exec_depend>
   <exec_depend>uav_mission</exec_depend>
   <exec_depend>uav_hardware</exec_depend>
+  <exec_depend>uav_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
 

@@ -7,6 +7,7 @@ import pytest
 
 pytest.importorskip("launch_ros")
 
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch_ros.actions import Node
 
 LAUNCH_DIR = Path(__file__).resolve().parents[1] / "launch"
@@ -30,3 +31,10 @@ def test_real_launch_starts_the_five_nodes():
         "mission_node",
         "perception_node",
     ]
+
+
+def test_sim_launch_declares_its_arguments():
+    ld = _load("sim.launch.py")
+    args = {e.name for e in ld.entities if isinstance(e, DeclareLaunchArgument)}
+    assert {"weights", "seed", "round", "results_dir", "gui"} <= args
+    assert any(isinstance(e, OpaqueFunction) for e in ld.entities)

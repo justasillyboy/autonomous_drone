@@ -1,0 +1,22 @@
+# Closed-loop simulation. Weights come from scripts/fetch_assets.sh (assets/), results land
+# in results/. Examples:
+#   docker compose -f docker/compose.yaml build sim
+#   SEED=7 docker compose -f docker/compose.yaml run --rm sim
+#   docker compose -f docker/compose.yaml run --rm sim ros2 launch uav_bringup sim.launch.py \
+#       weights:=/assets/model.onnx mode:=direction_check results_dir:=/results
+services:
+  sim:
+    build:
+      context: ..
+      dockerfile: docker/sim.Dockerfile
+    image: uav-sim:latest
+    volumes:
+      - ../assets:/assets:ro
+      - ../results:/results
+    environment:
+      - SEED=${SEED:-0}
+      - ROUND=${ROUND:-qualifier}
+    command: >
+      bash -c "ros2 launch uav_bringup sim.launch.py
+      weights:=/assets/yolo11s-seg_synth_export-2026-04-24.onnx
+      seed:=$${SEED} round:=$${ROUND} results_dir:=/results"

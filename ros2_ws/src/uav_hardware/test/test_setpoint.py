@@ -11,6 +11,7 @@ from uav_hardware.setpoint import (
     MAV_CMD_DO_SET_SERVO,
     VELOCITY_AND_YAW_RATE,
     ActionGate,
+    Actions,
     fill_position_target,
     servo_command,
     to_setpoint,
@@ -43,24 +44,46 @@ DROP = FlightCommand(Phase.DROPPING, "DROP", drop_ball=True)
 
 def test_no_setpoint_and_no_drop_outside_guided():
     gate = ActionGate()
-    assert gate.on_command(DROP, 0.0) == (None, None)  # mode unknown
+    assert gate.on_command(DROP, 0.0) == Actions()  # mode unknown
     gate.mode = "LOITER"
-    assert gate.on_command(DROP, 0.0) == (None, None)
+    assert gate.on_command(DROP, 0.0) == Actions()
     assert gate.on_tick(5.0) is None
 
 
 def test_drop_is_a_pulse_back_to_idle():
     gate = ActionGate(mode="GUIDED", pulse_s=0.5)
-    sp, pwm = gate.on_command(DROP, 10.0)
-    assert sp is not None and pwm == 1900
-    assert gate.on_command(DROP, 10.1)[1] is None  # no second drop mid-pulse
+    act = gate.on_command(DROP, 10.0)
+    assert act.setpoint is not None and act.servo_pwm == 1900
+    assert gate.on_command(DROP, 10.1).servo_pwm is None  # no second drop mid-pulse
     assert gate.on_tick(10.3) is None
     assert gate.on_tick(10.5) == 1100
-    assert gate.on_command(DROP, 12.0)[1] == 1900  # the next ball can go
+    assert gate.on_command(DROP, 12.0).servo_pwm == 1900  # the next ball can go
 
 
 def test_guided_gate_can_be_disabled_for_bench_tests():
-    assert ActionGate(require_guided=False).on_command(DROP, 0.0)[1] == 1900
+    assert ActionGate(require_guided=False).on_command(DROP, 0.0).servo_pwm == 1900
+
+
+TAKEOFF = FlightCommand(Phase.TAKEOFF, "TAKEOFF", vz=-0.8)
+
+
+def test_takeoff_command_once_when_armed_on_the_ground():
+    gate = ActionGate(mode="GUIDED", takeoff_alt_m=3.3)
+    assert gate.on_command(TAKEOFF, 0.0).takeoff_alt_m is None  # not armed yet
+    gate.armed, gate.on_ground = True, True
+    assert gate.on_command(TAKEOFF, 0.1).takeoff_alt_m == 3.3
+    assert gate.on_command(TAKEOFF, 0.2).takeoff_alt_m is None  # sent once
+    gate.on_disarmed()
+    assert gate.on_command(TAKEOFF, 9.0).takeoff_alt_m == 3.3  # retry flight
+
+
+def test_land_mode_once_when_the_mission_lands():
+    gate = ActionGate(mode="GUIDED")
+    approach = FlightCommand(Phase.LANDING, "APPROACH", vz=0.3)
+    land = FlightCommand(Phase.LANDING, "LAND", vz=0.4)
+    assert gate.on_command(approach, 0.0).set_mode is None
+    assert gate.on_command(land, 0.1).set_mode == "LAND"
+    assert gate.on_command(land, 0.2).set_mode is None
 
 
 def test_servo_command_fields():

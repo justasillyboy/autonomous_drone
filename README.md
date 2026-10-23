@@ -18,7 +18,7 @@ camera, ArduPilot flight controller via MAVROS.
 |---|---|
 | M0 Bootstrap: legacy import, asset release, CI | Done |
 | M1 Core: `uav_core` + ROS 2 packages | Done in code: `uav_core`, inference backends, tools, ROS 2 nodes with `colcon test` in CI. Needs hardware to go further |
-| M2 Closed-loop simulation (Gazebo + ArduPilot SITL) | Not started |
+| M2 Closed-loop simulation (Gazebo + ArduPilot SITL) | Field, independent referee, ball dropper, moving F2, direction check, Docker image and CI smoke test written; first runs in CI |
 | M3 ML experiments on real images | Not started |
 | M4 Edge: INT8 model on the Hailo-8L, benchmarks | Not started |
 | M5 Hardware-in-the-loop + Monte Carlo | Not started |
@@ -51,7 +51,8 @@ Measured so far, without hardware:
 | `uav_core/` | Perception, estimation, control, mission logic and HUD in pure Python (no ROS), with golden characterisation tests against the legacy code |
 | `edge/` | Inference backends behind one interface: ONNX Runtime, Ultralytics (Hailo in M4) |
 | `tools/` | `uav-calibrate-camera`, `uav-hsv` (fit or tune colour ranges), `uav-run-video` (replay a flight with the HUD) |
-| `ros2_ws/src/` | ROS 2 Jazzy packages: `uav_interfaces`, `uav_perception`, `uav_mission`, `uav_hardware`, `uav_bringup` |
+| `ros2_ws/src/` | ROS 2 Jazzy packages: `uav_interfaces`, `uav_perception`, `uav_mission`, `uav_hardware`, `uav_sim`, `uav_bringup` |
+| `docker/` | Simulation image (Gazebo Harmonic + ArduCopter SITL + the stack) and compose file |
 | `config/` | Field configuration, e.g. HSV ranges fitted on the real frames |
 | `legacy/` | Original competition code, byte-for-byte, with its snapshot history ([details](legacy/README.md)) |
 | `assets/` | Binary assets (weights, datasets, videos), not in git; only `SHA256SUMS` is tracked |
@@ -59,6 +60,7 @@ Measured so far, without hardware:
 | `scripts/publish_assets.sh` | Uploads `assets/` to a GitHub Release (maintainers) |
 | `docs/config-reference.md` | Every mission config key with default, unit, range and rule source; generated from the schema, a test fails if it drifts |
 | `docs/decisions/` | Architecture decision records |
+| `docs/simulation.md` | How the closed-loop simulation and its referee work |
 | `docs/hardware-checklist.md` | The steps that need the drone, in order |
 | `docs/superpowers/` | Design spec and implementation plans |
 
