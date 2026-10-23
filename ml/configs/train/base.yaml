@@ -1,0 +1,29 @@
+# Shared training settings (Ultralytics YOLO-seg). Experiment files override keys.
+model: yolo11n-seg.pt   # Hailo-8L candidate; E3 compares n / s / YOLOv8n
+imgsz: 640
+epochs: 150
+batch: 16
+patience: 40
+optimizer: auto
+lr0: 0.01
+lrf: 0.01
+momentum: 0.937
+weight_decay: 0.0005
+warmup_epochs: 3
+close_mosaic: 15
+mask_ratio: 4           # legacy Hailo constraint, tested in E4
+overlap_mask: true
+amp: true
+# Augmentation: a downward camera sees targets at any rotation
+degrees: 180.0
+scale: 0.5
+fliplr: 0.5
+flipud: 0.5
+mosaic: 1.0
+copy_paste: 0.3
+hsv_h: 0.015
+hsv_s: 0.7
+hsv_v: 0.4
+# Data
+train_fraction: 1.0     # share of the 178 real training frames (E1)
+seeds: [0, 1, 2]        # every configuration runs once per seed

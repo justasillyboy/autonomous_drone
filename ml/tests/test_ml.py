@@ -3,9 +3,10 @@ import json
 import cv2
 import numpy as np
 import pytest
+import yaml
 from uav_core.perception import RawInstance
 from uav_core.types import TargetClass
-from uav_ml import evaluate, splits
+from uav_ml import build_dataset, evaluate, splits, train
 from uav_ml.metrics import (
     IOU_THRESHOLDS,
     Gt,
@@ -189,3 +190,45 @@ def test_eval_cli_end_to_end(tmp_path, monkeypatch, capsys):
     # a 3 px disc at 1/4 resolution, upscaled: blocky, so clearly below a smooth disc's 1.0
     assert 0.7 < report["circularity"]["mean"] < 0.9 and "ci95" in report["radius_rel_err"]
     assert '"subset": "test"' in capsys.readouterr().out
+
+
+# -- dataset building and training configs ---------------------------------------------------
+
+
+def test_build_dataset_lays_out_yolo_folders(tmp_path):
+    ds = _dataset(tmp_path / "ds", [0, 2, 4, 6, 36, 45])
+    split = tmp_path / "split.json"
+    splits.main(["--dataset", str(ds), "--out", str(split)])
+    out = tmp_path / "yolo"
+    counts = build_dataset.build(ds, split, out, train_fraction=0.5)
+    assert counts == {"train": 2, "val": 1, "test": 1}
+    assert len(list((out / "labels" / "train").glob("*.txt"))) == 2
+    data = yaml.safe_load((out / "data.yaml").read_text())
+    assert data["names"] == {0: "circle", 1: "semicircle", 2: "H_landing"}
+    assert build_dataset.main(["--dataset", str(ds), "--split", str(split), "--out", str(out)]) == 0
+
+
+def test_subsample_spans_the_recording():
+    pairs = [(i, i) for i in range(10)]
+    assert build_dataset.subsample(pairs, 0.3) == [(0, 0), (3, 3), (6, 6)]
+    assert build_dataset.subsample(pairs, 1.0) == pairs
+    with pytest.raises(ValueError):
+        build_dataset.subsample(pairs, 0.0)
+
+
+def test_experiment_configs_inherit_and_map_to_ultralytics(tmp_path):
+    cfg = train.load_config(train.SPLIT.parents[1] / "train" / "e1_real_25.yaml")
+    assert cfg["train_fraction"] == 0.25 and cfg["model"] == "yolo11n-seg.pt"
+    assert cfg["mask_ratio"] == 4 and cfg["seeds"] == [0, 1, 2]
+    args = train.ultralytics_args(cfg, tmp_path / "data.yaml", tmp_path / "e1" / "seed1", 1)
+    assert args["seed"] == 1 and args["name"] == "seed1" and args["data"].endswith("data.yaml")
+    assert not {"inherit", "train_fraction", "seeds", "model"} & args.keys()
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("train_fraction: 2\n")
+    with pytest.raises(ValueError, match="train_fraction"):
+        train.load_config(bad)
+
+
+def test_every_shipped_config_loads():
+    for path in sorted((train.SPLIT.parents[1] / "train").glob("*.yaml")):
+        assert "model" in train.load_config(path)

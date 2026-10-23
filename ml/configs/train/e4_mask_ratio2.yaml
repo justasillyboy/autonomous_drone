@@ -1,0 +1,3 @@
+# E4: the legacy "mask_ratio 4 is a hardware constraint" rule, measured
+inherit: base.yaml
+mask_ratio: 2

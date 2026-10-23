@@ -1,0 +1,3 @@
+# E3: accuracy vs Hailo-8L latency, larger model
+inherit: base.yaml
+model: yolo11s-seg.pt
