@@ -8,6 +8,7 @@ dependencies = [
     "opencv-python-headless>=4.8,<5",
     "uav-core",
     "uav-edge",
+    "uav-ml",
 ]
 
 [project.scripts]
@@ -18,6 +19,7 @@ uav-run-video = "uav_tools.run_video:main"
 [tool.uv.sources]
 uav-core = { workspace = true }
 uav-edge = { workspace = true }
+uav-ml = { workspace = true }
 
 [build-system]
 requires = ["hatchling>=1.27"]

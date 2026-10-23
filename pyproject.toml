@@ -3,7 +3,7 @@ name = "autonomous-drone"
 version = "0.0.0"
 description = "Workspace root for the autonomous fire-fighting UAV (not a package)"
 requires-python = ">=3.12"
-dependencies = ["uav-core", "uav-edge", "uav-tools"]
+dependencies = ["uav-core", "uav-edge", "uav-ml", "uav-tools"]
 
 [tool.uv]
 package = false
@@ -12,10 +12,11 @@ python-preference = "only-managed"
 [tool.uv.sources]
 uav-core = { workspace = true }
 uav-edge = { workspace = true }
+uav-ml = { workspace = true }
 uav-tools = { workspace = true }
 
 [tool.uv.workspace]
-members = ["uav_core", "edge", "tools"]
+members = ["uav_core", "edge", "ml", "tools"]
 
 [dependency-groups]
 dev = [
@@ -53,6 +54,7 @@ testpaths = [
     "uav_core/tests",
     "edge/tests",
     "tools/tests",
+    "ml/tests",
     "ros2_ws/src/uav_mission/test",
     "ros2_ws/src/uav_hardware/test",
     "ros2_ws/src/uav_perception/test",
@@ -64,6 +66,7 @@ source = [
     "uav_core/src",
     "edge/src",
     "tools/src",
+    "ml/src",
     "ros2_ws/src/uav_mission/uav_mission",
     "ros2_ws/src/uav_hardware/uav_hardware",
     "ros2_ws/src/uav_perception/uav_perception",
@@ -77,17 +80,23 @@ show_missing = true
 skip_covered = true
 
 [tool.importlinter]
-root_packages = ["uav_core", "uav_edge", "uav_tools"]
+root_packages = ["uav_core", "uav_edge", "uav_ml", "uav_tools"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "uav_core stays free of ROS and ML frameworks"
 type = "forbidden"
 source_modules = ["uav_core"]
-forbidden_modules = ["rclpy", "torch", "ultralytics", "onnxruntime", "uav_edge", "uav_tools"]
+forbidden_modules = ["rclpy", "torch", "ultralytics", "onnxruntime", "uav_edge", "uav_ml", "uav_tools"]
 
 [[tool.importlinter.contracts]]
 name = "uav_edge stays free of ROS"
 type = "forbidden"
 source_modules = ["uav_edge"]
+forbidden_modules = ["rclpy", "uav_ml", "uav_tools"]
+
+[[tool.importlinter.contracts]]
+name = "uav_ml does not depend on the operator tools or ROS"
+type = "forbidden"
+source_modules = ["uav_ml"]
 forbidden_modules = ["rclpy", "uav_tools"]

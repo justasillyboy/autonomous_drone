@@ -21,9 +21,9 @@ import numpy as np
 from uav_core.config import DEFAULT_HSV_RANGES, PerceptionConfig
 from uav_core.perception.color import color_of_mask, load_hsv_calibration
 from uav_core.types import Color
+from uav_ml.labels import iter_dataset
 
 from uav_tools.hsv import HsvRanges, classify_sample, fit_ranges, in_ranges, save_hsv_json
-from uav_tools.yolo_labels import iter_dataset
 
 CIRCLE_CLASS_ID = 0
 

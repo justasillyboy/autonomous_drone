@@ -23,8 +23,7 @@ from uav_core.perception.camera import (
     calibrate,
     find_board,
 )
-
-from uav_tools.yolo_labels import IMAGE_SUFFIXES
+from uav_ml.labels import IMAGE_SUFFIXES
 
 RMS_WARN_PX = 1.0
 

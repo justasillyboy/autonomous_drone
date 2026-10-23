@@ -9,9 +9,9 @@ from uav_core.perception import RawInstance
 from uav_core.perception.camera import Calibration
 from uav_core.perception.color import load_hsv_calibration
 from uav_core.types import Color, Phase, TargetClass
+from uav_ml.labels import read_label_file
 from uav_tools import calibrate_camera, hsv_cli, run_video
 from uav_tools.hsv import classify_sample, fit_ranges, hue_ranges, in_ranges, save_hsv_json
-from uav_tools.yolo_labels import read_label_file
 
 # -- HSV ----------------------------------------------------------------------------------
 

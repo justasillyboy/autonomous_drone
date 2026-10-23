@@ -19,7 +19,7 @@ camera, ArduPilot flight controller via MAVROS.
 | M0 Bootstrap: legacy import, asset release, CI | Done |
 | M1 Core: `uav_core` + ROS 2 packages | Done in code: `uav_core`, inference backends, tools, ROS 2 nodes with `colcon test` in CI. Needs hardware to go further |
 | M2 Closed-loop simulation (Gazebo + ArduPilot SITL) | Field, independent referee, ball dropper, moving F2, direction check, Docker image and CI smoke test written; first runs in CI |
-| M3 ML experiments on real images | Not started |
+| M3 ML experiments on real images | Frozen time-block split of the real frames, metrics with bootstrap CIs, legacy baseline measured; training to do (needs a GPU) |
 | M4 Edge: INT8 model on the Hailo-8L, benchmarks | Not started |
 | M5 Hardware-in-the-loop + Monte Carlo | Not started |
 | M6 Report and demo | Not started |
@@ -34,9 +34,11 @@ Measured so far, without hardware:
 - **Colour thresholds:** on 85 held-out real frames, the legacy HSV ranges give 41.8 % of the
   fire circles the right colour; ranges fitted on the other 201 frames give 95.1 %
   ([details](config/README.md)).
-- **Legacy models on real images:** the shipped YOLO11s exports score at most 0.03 for
-  `circle` on real frames, against 0.9 on debug renders: they were trained on synthetic data
-  only, so M3 retrains on real labels.
+- **Legacy models on real images** (frozen test split, 54 frames, 169 instances, 95 %
+  bootstrap CIs): the better YOLO11s export reaches mask AP50 0.37 [0.29, 0.45] and AP50-95
+  0.23 [0.19, 0.27]; circles are found (AP50 0.58) but helipads mostly are not (0.15). Both
+  were trained on synthetic data only, so M3 retrains on real labels
+  ([details](ml/experiments/baseline/README.md)).
 - **Bugs found by porting** (none was ever observed, because the legacy stack never flew end
   to end): velocity commands sent to MAVROS with the wrong frame (descend would climb),
   mirrored body velocity and yaw from the IMU, masks scaled with letterbox padding, the
@@ -53,6 +55,7 @@ Measured so far, without hardware:
 | `tools/` | `uav-calibrate-camera`, `uav-hsv` (fit or tune colour ranges), `uav-run-video` (replay a flight with the HUD) |
 | `ros2_ws/src/` | ROS 2 Jazzy packages: `uav_interfaces`, `uav_perception`, `uav_mission`, `uav_hardware`, `uav_sim`, `uav_bringup` |
 | `docker/` | Simulation image (Gazebo Harmonic + ArduCopter SITL + the stack) and compose file |
+| `ml/` | Frozen data split, evaluation metrics with bootstrap CIs, baseline results |
 | `config/` | Field configuration, e.g. HSV ranges fitted on the real frames |
 | `legacy/` | Original competition code, byte-for-byte, with its snapshot history ([details](legacy/README.md)) |
 | `assets/` | Binary assets (weights, datasets, videos), not in git; only `SHA256SUMS` is tracked |

@@ -18,6 +18,7 @@ members = [
     "autonomous-drone",
     "uav-core",
     "uav-edge",
+    "uav-ml",
     "uav-tools",
 ]
 
@@ -50,6 +51,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "uav-core" },
     { name = "uav-edge" },
+    { name = "uav-ml" },
     { name = "uav-tools" },
 ]
 
@@ -68,6 +70,7 @@ dev = [
 requires-dist = [
     { name = "uav-core", editable = "uav_core" },
     { name = "uav-edge", editable = "edge" },
+    { name = "uav-ml", editable = "ml" },
     { name = "uav-tools", editable = "tools" },
 ]
 
@@ -2240,12 +2243,13 @@ requires-dist = [
 provides-extras = ["ultralytics"]
 
 [[package]]
-name = "uav-tools"
+name = "uav-ml"
 version = "0.1.0"
-source = { editable = "tools" }
+source = { editable = "ml" }
 dependencies = [
     { name = "numpy" },
     { name = "opencv-python-headless" },
+    { name = "pyyaml" },
     { name = "uav-core" },
     { name = "uav-edge" },
 ]
@@ -2254,8 +2258,30 @@ dependencies = [
 requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python-headless", specifier = ">=4.8,<5" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "uav-core", editable = "uav_core" },
     { name = "uav-edge", editable = "edge" },
+]
+
+[[package]]
+name = "uav-tools"
+version = "0.1.0"
+source = { editable = "tools" }
+dependencies = [
+    { name = "numpy" },
+    { name = "opencv-python-headless" },
+    { name = "uav-core" },
+    { name = "uav-edge" },
+    { name = "uav-ml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "opencv-python-headless", specifier = ">=4.8,<5" },
+    { name = "uav-core", editable = "uav_core" },
+    { name = "uav-edge", editable = "edge" },
+    { name = "uav-ml", editable = "ml" },
 ]
 
 [[package]]
