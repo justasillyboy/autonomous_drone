@@ -9,9 +9,12 @@ from uav_edge.runtime.letterbox import Letterbox
 
 __all__ = ["Backend", "Letterbox", "class_map", "load_backend"]
 
+HEF_CLASSES = ("circle", "semicircle", "H_landing")
+
 
 def load_backend(weights: str | Path, conf: float = 0.5) -> Backend:
-    """Pick the backend from the file type: .onnx -> ONNX Runtime, .pt -> Ultralytics."""
+    """Pick the backend from the file type: .onnx -> ONNX Runtime, .pt -> Ultralytics,
+    .hef -> Hailo-8L."""
     suffix = Path(weights).suffix.lower()
     if suffix == ".onnx":
         from uav_edge.runtime.onnx import OnnxBackend
@@ -21,4 +24,8 @@ def load_backend(weights: str | Path, conf: float = 0.5) -> Backend:
         from uav_edge.runtime.ultralytics import UltralyticsBackend
 
         return UltralyticsBackend(weights, conf=conf)
-    raise ValueError(f"no backend for {weights} (expected .onnx or .pt; .hef comes with M4)")
+    if suffix == ".hef":  # a HEF carries no class names: the training data's order
+        from uav_edge.runtime.hailo import HailoBackend
+
+        return HailoBackend(weights, class_map(dict(enumerate(HEF_CLASSES))), conf=conf)
+    raise ValueError(f"no backend for {weights} (expected .onnx, .pt or .hef)")

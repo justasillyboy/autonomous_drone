@@ -184,7 +184,7 @@ def test_to_blob_is_rgb_chw_unit_range():
 
 def test_unknown_weight_type():
     with pytest.raises(ValueError, match=r"\.hef"):
-        load_backend("model.hef")
+        load_backend("model.tflite")
 
 
 @pytest.mark.skipif(

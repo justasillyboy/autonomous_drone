@@ -44,7 +44,18 @@ class OnnxBackend:
         self.iou = iou
 
     def infer(self, frame_bgr: np.ndarray) -> list[RawInstance]:
+        lb, blob = self.preprocess(frame_bgr)
+        return self.postprocess(self.run(blob), lb)
+
+    # The three stages, separately timed by uav-edge-bench.
+    def preprocess(self, frame_bgr: np.ndarray) -> tuple[Letterbox, np.ndarray]:
         h, w = frame_bgr.shape[:2]
         lb = Letterbox(w, h, self.in_w, self.in_h)
-        pred, proto = self._session.run(None, {self._input_name: to_blob(lb.apply(frame_bgr))})
+        return lb, to_blob(lb.apply(frame_bgr))
+
+    def run(self, blob: np.ndarray) -> list[np.ndarray]:
+        return self._session.run(None, {self._input_name: blob})
+
+    def postprocess(self, outputs: list[np.ndarray], lb: Letterbox) -> list[RawInstance]:
+        pred, proto = outputs
         return decode(pred, proto, lb, self.classes, self.conf, self.iou)

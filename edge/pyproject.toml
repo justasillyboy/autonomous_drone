@@ -10,6 +10,10 @@ dependencies = [
     "uav-core",
 ]
 
+[project.scripts]
+uav-edge-bench = "uav_edge.bench:main"
+uav-edge-compile = "uav_edge.hailo_compile:main"
+
 [project.optional-dependencies]
 # Pulls in torch; install only where needed: uv sync --extra ultralytics
 ultralytics = ["ultralytics>=8.3"]
