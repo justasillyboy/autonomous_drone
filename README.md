@@ -17,7 +17,7 @@ camera, ArduPilot flight controller via MAVROS.
 | Milestone | State |
 |---|---|
 | M0 Bootstrap: legacy import, asset release, CI | Done |
-| M1 Core: `uav_core` + ROS 2 packages | `uav_core` mission logic ported and tested; HUD, tools and ROS 2 packages to do |
+| M1 Core: `uav_core` + ROS 2 packages | Done in code: `uav_core`, inference backends, tools, ROS 2 nodes with `colcon test` in CI. Needs hardware to go further |
 | M2 Closed-loop simulation (Gazebo + ArduPilot SITL) | Not started |
 | M3 ML experiments on real images | Not started |
 | M4 Edge: INT8 model on the Hailo-8L, benchmarks | Not started |
@@ -25,19 +25,41 @@ camera, ArduPilot flight controller via MAVROS.
 | M6 Report and demo | Not started |
 
 `uav_core` reproduces the legacy `mission.py` command sequence bit-exactly on 10 scripted
-scenarios (15,350 steps at 100 Hz), with 118 tests and 99 % line coverage.
+scenarios (15,350 steps at 100 Hz). Python CI: about 210 tests, 98 % line coverage; ROS CI:
+`colcon build && colcon test` in `ros:jazzy-ros-base`, including a `launch_testing` run of
+`mission_node`.
+
+Measured so far, without hardware:
+
+- **Colour thresholds:** on 85 held-out real frames, the legacy HSV ranges give 41.8 % of the
+  fire circles the right colour; ranges fitted on the other 201 frames give 95.1 %
+  ([details](config/README.md)).
+- **Legacy models on real images:** the shipped YOLO11s exports score at most 0.03 for
+  `circle` on real frames, against 0.9 on debug renders: they were trained on synthetic data
+  only, so M3 retrains on real labels.
+- **Bugs found by porting** (none was ever observed, because the legacy stack never flew end
+  to end): velocity commands sent to MAVROS with the wrong frame (descend would climb),
+  mirrored body velocity and yaw from the IMU, masks scaled with letterbox padding, the
+  vision altitude computed with the pre-undistortion focal length, and a drop servo that
+  never returned to idle. See [ADR-0003](docs/decisions/0003-frame-conventions.md) and the
+  commit history.
 
 ## Repository map
 
 | Path | Contents |
 |---|---|
-| `uav_core/` | Perception, estimation, control and mission logic in pure Python (no ROS), with golden characterisation tests against the legacy code |
+| `uav_core/` | Perception, estimation, control, mission logic and HUD in pure Python (no ROS), with golden characterisation tests against the legacy code |
+| `edge/` | Inference backends behind one interface: ONNX Runtime, Ultralytics (Hailo in M4) |
+| `tools/` | `uav-calibrate-camera`, `uav-hsv` (fit or tune colour ranges), `uav-run-video` (replay a flight with the HUD) |
+| `ros2_ws/src/` | ROS 2 Jazzy packages: `uav_interfaces`, `uav_perception`, `uav_mission`, `uav_hardware`, `uav_bringup` |
+| `config/` | Field configuration, e.g. HSV ranges fitted on the real frames |
 | `legacy/` | Original competition code, byte-for-byte, with its snapshot history ([details](legacy/README.md)) |
 | `assets/` | Binary assets (weights, datasets, videos), not in git; only `SHA256SUMS` is tracked |
 | `scripts/fetch_assets.sh` | Downloads the assets from the GitHub Release and verifies their checksums |
 | `scripts/publish_assets.sh` | Uploads `assets/` to a GitHub Release (maintainers) |
 | `docs/config-reference.md` | Every mission config key with default, unit, range and rule source; generated from the schema, a test fails if it drifts |
-| `docs/decisions/` | Architecture decision records (timers in seconds, fail-fast config, frame conventions) |
+| `docs/decisions/` | Architecture decision records |
+| `docs/hardware-checklist.md` | The steps that need the drone, in order |
 | `docs/superpowers/` | Design spec and implementation plans |
 
 ## Development
@@ -49,6 +71,13 @@ uv sync                    # environment with uav_core and the dev tools
 uv run pytest --cov        # golden + unit tests, fails below 80 % coverage
 uv run lint-imports        # uav_core must not import ROS, torch or ultralytics
 uv run pre-commit install  # ruff and file checks on every commit
+
+# ROS 2 packages, in the same container as CI
+docker run --rm -v "$PWD":/repo -w /repo ros:jazzy-ros-base scripts/ros_ci.sh
+
+# replay a recorded flight through perception + mission
+uv run uav-run-video --weights model.onnx --source flight.mp4 --output hud.mp4 \
+    --hsv-calib config/hsv_calib.json
 ```
 
 ## Getting the assets

@@ -7,9 +7,24 @@ tests) and is deleted step by step as the replacements land.
 
 | Path | What it is |
 |---|---|
-| `vision/` | Python vision + mission stack: synthetic data generator, training, evaluation, export, `mission.py` state machine, video/frame tools, calibration tools, docs |
+| `vision/` | What is left of the Python stack: synthetic data generator, training, loss, evaluation, export, telemetry logger, docs. Replaced in M3 |
 | `vision/dataset/` | Metadata of the labelled real-image dataset (Roboflow export, class-ID remap script). The images live in the asset release |
-| `ros2/uav_deploy/` | ROS 2 (`ament_python`) package splitting the stack into camera / perception / mission / action / sensor nodes |
+
+## Removed, with their replacements
+
+Deleted at the end of M1. The last version of each is at commit
+[`572856f`](https://github.com/justasillyboy/autonomous_drone/tree/572856f/legacy).
+
+| Legacy file | Replaced by |
+|---|---|
+| `vision/mission.py` (3,095 lines) | `uav_core` (perception, estimation, control, mission, HUD); the characterisation goldens recorded from it stay in `uav_core/tests/characterisation/golden/` |
+| `vision/test_video.py`, `vision/postprocess.py` | `uav-run-video` (`tools/`) |
+| `vision/camera_calibration.py` | `uav_core.perception.camera` + `uav-calibrate-camera` |
+| `vision/hsv_calibrator.py` | `uav-hsv fit` / `uav-hsv tune` (same JSON layout) |
+| `ros2/uav_deploy/` | `ros2_ws/src/` (`uav_interfaces`, `uav_perception`, `uav_mission`, `uav_hardware`, `uav_bringup`) |
+
+`vision/export.py --extract-calib-frames` imported `camera_calibration` and no longer runs;
+it is replaced with the rest of the training code in M3.
 
 ## Snapshot history
 
