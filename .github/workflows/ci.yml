@@ -37,3 +37,13 @@ jobs:
 
       - name: Tests (golden + unit, coverage >= 80 %)
         run: uv run pytest --cov
+
+  ros2:
+    name: ROS 2 Jazzy build and test
+    runs-on: ubuntu-24.04
+    container: ros:jazzy-ros-base
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: colcon build + test (unit and launch_testing)
+        run: scripts/ros_ci.sh

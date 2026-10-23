@@ -40,11 +40,33 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 # "." must not be on pythonpath: the uav_core/ folder would shadow the installed package.
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
-pythonpath = ["uav_core/tests"]
-testpaths = ["uav_core/tests", "edge/tests", "tools/tests"]
+# The ROS packages' pure modules (bridge, setpoint, pipeline) are tested here without ROS;
+# their *_node.py shells and launch tests run in the ROS CI job (colcon test).
+pythonpath = [
+    "uav_core/tests",
+    "ros2_ws/src/uav_mission",
+    "ros2_ws/src/uav_hardware",
+    "ros2_ws/src/uav_perception",
+]
+testpaths = [
+    "uav_core/tests",
+    "edge/tests",
+    "tools/tests",
+    "ros2_ws/src/uav_mission/test",
+    "ros2_ws/src/uav_hardware/test",
+    "ros2_ws/src/uav_perception/test",
+]
 
 [tool.coverage.run]
-source = ["uav_core/src", "edge/src", "tools/src"]
+source = [
+    "uav_core/src",
+    "edge/src",
+    "tools/src",
+    "ros2_ws/src/uav_mission/uav_mission",
+    "ros2_ws/src/uav_hardware/uav_hardware",
+    "ros2_ws/src/uav_perception/uav_perception",
+]
+omit = ["*/*_node.py"]
 
 [tool.coverage.report]
 fail_under = 80

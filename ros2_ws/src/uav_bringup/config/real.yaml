@@ -1,0 +1,28 @@
+# Parameters for real.launch.py. Paths are on the Pi; see docs/hardware-checklist.md.
+perception_node:
+  ros__parameters:
+    input: v4l2
+    device: /dev/video0
+    width: 640
+    height: 480
+    fps: 30.0
+    conf: 0.5
+    debug_rate_hz: 5.0
+
+mission_node:
+  ros__parameters:
+    watchdog_timeout_s: 0.5
+
+action_node:
+  ros__parameters:
+    servo_channel: 9
+    servo_pwm_drop: 1900
+    servo_pwm_idle: 1100
+    servo_pulse_s: 0.5
+    require_guided: true
+
+bno080_node:
+  ros__parameters:
+    rate_hz: 50.0
+    i2c_address: 74  # 0x4A
+    mount_rpy_deg: [0.0, 0.0, 0.0]

@@ -2,7 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-24
-- **Code:** `uav_core/src/uav_core/frames.py`, `uav_core/tests/test_types_frames.py`
+- **Code:** `uav_core/src/uav_core/frames.py`, `uav_core/tests/test_types_frames.py`,
+  `ros2_ws/src/uav_hardware/uav_hardware/setpoint.py`, `ros2_ws/src/uav_mission/uav_mission/bridge.py`
 
 ## Context
 
@@ -12,7 +13,8 @@ legacy `FlightCommandMsg.msg` documents exactly that.
 
 ROS uses REP 103 instead: body **FLU** (+y left, +z up, yaw rate in rad/s, positive
 counter-clockwise) and **ENU** for local frames. The legacy bridge,
-`legacy/ros2/uav_deploy/UAV_node/action_mavros_node.py`, copied the fields straight across:
+[`action_mavros_node.py`](https://github.com/justasillyboy/autonomous_drone/blob/572856f/legacy/ros2/uav_deploy/UAV_node/action_mavros_node.py#L113-L134)
+(removed from the tree with the rest of `legacy/ros2`), copied the fields straight across:
 
 ```python
 twist.linear.x = float(msg.vx)
@@ -29,19 +31,35 @@ Only the yaw unit was converted. With the MAVROS `setpoint_velocity` plugin at i
 - a clockwise yaw request would turn it **counter-clockwise**;
 - "forward" and "right" would become east and north, whatever the heading.
 
-The code never flew end to end (defect D1), so this was never observed. The mission's own world
-frame (x along the nose at activation, y to its right, yaw positive clockwise) was also implicit
-in the arithmetic.
+The inputs had the same problem in
+[`mission_control_node.py`](https://github.com/justasillyboy/autonomous_drone/blob/572856f/legacy/ros2/uav_deploy/UAV_node/mission_control_node.py#L344-L381):
+
+- `/mavros/local_position/velocity_body` is FLU, but its `linear.y` went into the mission as
+  "right", so the dead reckoning and the scored-zone tracking drifted mirrored sideways;
+- the IMU quaternion was turned into Euler angles in ROS conventions, so the yaw fed to the
+  mission turned counter-clockwise while the mission assumes clockwise, mirroring the
+  scored-zone rotation and the geofence return direction. Pitch and roll were used only as
+  magnitudes, so the drop gate was unaffected.
+
+The code never flew end to end (defect D1), so none of this was observed. The mission's own
+world frame (x along the nose at activation, y to its right, yaw positive clockwise) was also
+implicit in the arithmetic.
 
 ## Decision
 
 - `uav_core` speaks body FRD and the mission world frame described above. This keeps the
   legacy arithmetic, and therefore the characterisation goldens, unchanged.
 - `uav_core.frames` is the **only** place that converts between conventions:
-  `body_frd_to_flu` / `flu_to_body_frd`, `wrap_deg`, `rotate` / `rotate_inverse`. Other modules
+  `body_frd_to_flu` / `flu_to_body_frd`, `flu_rates_to_frd_dps`,
+  `enu_quaternion_to_frd_euler_deg`, `wrap_deg`, `rotate` / `rotate_inverse`. Other modules
   must not flip signs or convert angle units inline.
-- The ROS bridge (M1, Part C) converts each `FlightCommand` with `body_frd_to_flu` and
-  configures MAVROS for a **body** frame (`mav_frame: BODY_NED`, whose ROS side is FLU).
+- `action_node` converts each `FlightCommand` with `body_frd_to_flu` and sends it to
+  `/mavros/setpoint_raw/local` as a `PositionTarget` with `coordinate_frame = FRAME_BODY_NED`
+  and a type mask that uses only velocity and yaw rate. MAVROS takes FLU on its ROS side for
+  body frames and converts to FRD itself. Declaring the frame in each message removes the
+  dependence on the `setpoint_velocity` plugin's `mav_frame` parameter.
+- `mission_node` converts its inputs the same way: body velocity with `flu_to_body_frd`, IMU
+  attitude with `enu_quaternion_to_frd_euler_deg`, body rates with `flu_rates_to_frd_dps`.
 - The closed-loop simulation (M2) gets a direction test: a commanded +vz descends, +vy moves
   right and a positive yaw rate turns clockwise, checked against SITL ground truth.
 

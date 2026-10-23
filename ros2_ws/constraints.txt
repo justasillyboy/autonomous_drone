@@ -1,0 +1,3 @@
+# pip constraints for installing uav_core / uav_edge next to ROS 2 Jazzy (Ubuntu 24.04).
+# ROS's Python extensions are built against Debian's numpy 1.26; numpy 2 would break them.
+numpy<2
