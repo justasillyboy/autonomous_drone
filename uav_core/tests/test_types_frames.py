@@ -7,6 +7,8 @@ from hypothesis import strategies as st
 from uav_core.frames import (
     body_frd_to_flu,
     cos_sin_deg,
+    enu_quaternion_to_frd_euler_deg,
+    flu_rates_to_frd_dps,
     flu_to_body_frd,
     rotate,
     rotate_inverse,
@@ -53,3 +55,48 @@ def test_rotate_then_inverse_is_identity(x, y, a):
 def test_rotate_90_clockwise_turns_forward_into_right():
     c, s = cos_sin_deg(90.0)
     assert rotate(1.0, 0.0, c, s) == pytest.approx((0.0, 1.0), abs=1e-12)
+
+
+def _quat_zyx(roll_deg, pitch_deg, yaw_deg):
+    """Quaternion (x, y, z, w) of an intrinsic Z-Y-X rotation, as ROS publishes it."""
+    r, p, y = (math.radians(a) / 2 for a in (roll_deg, pitch_deg, yaw_deg))
+    cr, sr, cp, sp, cy, sy = (
+        math.cos(r),
+        math.sin(r),
+        math.cos(p),
+        math.sin(p),
+        math.cos(y),
+        math.sin(y),
+    )
+    return (
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+        cr * cp * cy + sr * sp * sy,
+    )
+
+
+@pytest.mark.parametrize(
+    ("enu_rpy", "frd_rpy"),
+    [
+        ((0, 0, 90), (0, 0, 0)),  # facing north: NED heading 0
+        ((0, 0, 0), (0, 0, 90)),  # facing east: heading 90, clockwise positive
+        ((0, -10, 90), (0, 10, 0)),  # nose up is negative pitch in FLU, positive in FRD
+        ((5, 0, 90), (5, 0, 0)),  # right wing down is positive roll in both
+    ],
+)
+def test_ros_attitude_becomes_frd(enu_rpy, frd_rpy):
+    got = enu_quaternion_to_frd_euler_deg(*_quat_zyx(*enu_rpy))
+    assert got == pytest.approx(frd_rpy, abs=1e-9)
+
+
+@given(angle)
+def test_frd_heading_turns_clockwise_when_ros_yaw_turns_counter_clockwise(a):
+    heading = enu_quaternion_to_frd_euler_deg(*_quat_zyx(0, 0, a))[2]
+    assert -180.0 <= heading < 180.0
+    assert wrap_deg(heading - (90.0 - a)) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_ros_body_rates_become_frd():
+    roll, pitch, yaw = flu_rates_to_frd_dps(math.radians(10), math.radians(20), math.radians(30))
+    assert (roll, pitch, yaw) == pytest.approx((10.0, -20.0, -30.0))
