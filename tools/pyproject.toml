@@ -1,0 +1,27 @@
+[project]
+name = "uav-tools"
+version = "0.1.0"
+description = "Operator and offline tools: camera and HSV calibration, video replay with the HUD"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.8,<5",
+    "uav-core",
+    "uav-edge",
+]
+
+[project.scripts]
+uav-calibrate-camera = "uav_tools.calibrate_camera:main"
+uav-hsv = "uav_tools.hsv_cli:main"
+uav-run-video = "uav_tools.run_video:main"
+
+[tool.uv.sources]
+uav-core = { workspace = true }
+uav-edge = { workspace = true }
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/uav_tools"]
