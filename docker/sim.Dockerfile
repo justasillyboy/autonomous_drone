@@ -14,7 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git curl ca-certificates ccache \
         python3-pip python3-pytest python3-dev \
         ros-jazzy-ros-gz ros-jazzy-mavros ros-jazzy-mavros-extras ros-jazzy-launch-testing-ros \
-        libgz-sim8-dev rapidjson-dev geographiclib-tools \
+        rapidjson-dev geographiclib-tools libopencv-dev \
+        libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+        gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
         libegl1 libgl1-mesa-dri mesa-utils \
     && geographiclib-get-geoids egm96-5 \
     && rm -rf /var/lib/apt/lists/*
@@ -26,9 +28,13 @@ RUN git clone --depth 1 --branch ${ARDUPILOT_TAG} --recurse-submodules --shallow
     && cd ${ARDUPILOT_HOME} && ./waf configure --board sitl && ./waf copter \
     && rm -rf ${ARDUPILOT_HOME}/build/sitl/ArduCopter ${ARDUPILOT_HOME}/build/sitl/libraries
 
-# Gazebo <-> ArduPilot JSON plugin and the iris models
+# Gazebo <-> ArduPilot JSON plugin and the iris models. Gazebo Harmonic comes from ROS's
+# vendor packages (ros-jazzy-gz-*-vendor, pulled in by ros-jazzy-ros-gz); sourcing ROS puts
+# their CMake configs on the prefix path. libgz-sim8-dev from packages.osrfoundation.org
+# would be a second, possibly ABI-different copy.
 RUN git clone https://github.com/ArduPilot/ardupilot_gazebo.git ${ARDUPILOT_GAZEBO} \
     && cd ${ARDUPILOT_GAZEBO} && git checkout ${ARDUPILOT_GAZEBO_REF} \
+    && . /opt/ros/jazzy/setup.sh \
     && mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     && make -j"$(nproc)"
 
