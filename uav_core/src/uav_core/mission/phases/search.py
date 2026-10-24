@@ -37,35 +37,36 @@ def select_target(
 ) -> TargetLock | None:
     """The target-coloured circle closest to the frame centre, or None.
 
-    Legacy quirks kept on purpose (fixed later, with a golden update): the vision altitude
-    memory `last_z_est` is updated for every unclipped circle before the colour check, using
-    the current target's diameter; the scored-zone check uses the Z of the previous circle.
+    Only circles of the target's colour feed the vision altitude, since only their real
+    diameter is known; the scored-zone test uses that circle's own altitude (the hardware
+    altitude when there is one). See ADR-0010 for the legacy behaviour this replaces.
     """
     cfg = ctx.cfg
     f_px = cfg.camera.f_px
     frame_cx, frame_cy = frame_w // 2, frame_h // 2
-    z_est = ctx.last_z_est if ctx.last_z_est is not None else cfg.drop.altitude_target_m
+    fallback_z = ctx.last_z_est if ctx.last_z_est is not None else cfg.drop.altitude_target_m
+    tof_low = tof_alt_m is not None and tof_alt_m < cfg.drop.altitude_min_m
     best: TargetLock | None = None
     best_offset = 0
     for det in detections:
-        if det.cls is not TargetClass.CIRCLE:
+        if det.cls is not TargetClass.CIRCLE or det.color != target.color:
             continue
         if diameter_ratio(det.radius, frame_w) > cfg.drop.max_fire_diameter_ratio:
             continue
-        if ctx.scored.contains(det.cx, det.cy, z_est, frame_cx, frame_cy, f_px):
+        z_vis = (
+            fallback_z
+            if det.edge_clipped
+            else altitude_from_diameter(det.radius * 2.0, target.diameter_m, f_px)
+        )
+        z_ref = altitude_m if altitude_m is not None else z_vis
+        if ctx.scored.contains(det.cx, det.cy, z_ref, frame_cx, frame_cy, f_px):
             continue
-        z_est = altitude_from_diameter(det.radius * 2.0, target.diameter_m, f_px)
-        if det.edge_clipped:
-            z_est = ctx.last_z_est if ctx.last_z_est is not None else cfg.drop.altitude_target_m
-        else:
-            ctx.last_z_est = z_est
+        if not det.edge_clipped:
+            ctx.last_z_est = z_vis
         if altitude_m is not None:
             z_drop, z_src = altitude_m, alt_source
         else:
-            z_drop, z_src = z_est, AltSource.VIS
-        tof_low = tof_alt_m is not None and tof_alt_m < cfg.drop.altitude_min_m
-        if det.color != target.color:
-            continue
+            z_drop, z_src = z_vis, AltSource.VIS
         offset = (det.cx - frame_cx) ** 2 + (det.cy - frame_cy) ** 2
         if best is None or offset < best_offset:
             best = TargetLock(

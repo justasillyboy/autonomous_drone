@@ -15,6 +15,7 @@ it (for example `ADR-0001` in `mission/timers.py`).
 | [0007](0007-moving-target-feedforward-gating.md) | F2 feedforward off while the drone manoeuvres | Accepted |
 | [0008](0008-scored-zones-in-world-space.md) | Circles already hit excluded by a radius in metres | Accepted |
 | [0009](0009-ros2-jazzy-mavros-setpoint-raw.md) | ROS 2 Jazzy, Gazebo Harmonic, MAVROS with body-frame setpoints | Accepted |
+| [0010](0010-legacy-quirks-fixed.md) | Legacy mission quirks fixed after the port | Accepted |
 
 ## Still to record
 
@@ -23,7 +24,6 @@ it (for example `ADR-0001` in `mission/timers.py`).
   ONNX is YOLO11s, which already contradicts decision 6 (defect D11).
 - Legacy decision 7 (boundary + Dice loss through an Ultralytics callback) moves with the
   training code in M3, together with experiment E2 that tests whether the loss helps.
-- One ADR per legacy quirk fixed after the port (listed in the design spec, section 6).
 
 ## Template
 

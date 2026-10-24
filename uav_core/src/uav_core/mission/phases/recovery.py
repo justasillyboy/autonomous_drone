@@ -13,6 +13,7 @@ from uav_core.mission.context import (
     reset_tracking,
 )
 from uav_core.mission.timers import reached, scan_step_index
+from uav_core.perception.geometry import diameter_ratio
 from uav_core.types import Detection, FlightCommand, Phase, TargetClass
 
 _log = logging.getLogger(__name__)
@@ -21,14 +22,17 @@ _log = logging.getLogger(__name__)
 def _target_visible(
     ctx: MissionContext, detections: Sequence[Detection], frame_w: int, frame_h: int
 ) -> bool:
-    """Any unscored circle of the target colour. Unlike targeting, no size limit applies
-    (legacy behaviour)."""
+    """Any unscored circle of the target colour, under the same size cap as targeting (the
+    legacy scan had none, so an oversized red disc bounced it between RECOVERY and
+    TARGETING; ADR-0010)."""
     target = current_target(ctx)
     if target is None:
         return False
     z = ctx.last_z_est if ctx.last_z_est is not None else ctx.cfg.drop.altitude_target_m
     for det in detections:
         if det.cls is not TargetClass.CIRCLE:
+            continue
+        if diameter_ratio(det.radius, frame_w) > ctx.cfg.drop.max_fire_diameter_ratio:
             continue
         if ctx.scored.contains(det.cx, det.cy, z, frame_w // 2, frame_h // 2, ctx.cfg.camera.f_px):
             continue

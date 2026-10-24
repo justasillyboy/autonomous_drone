@@ -41,6 +41,7 @@ _ODOM_DT_RANGE_S = (1e-3, 0.5)  # survive a stall or a breakpoint without corrup
 _MIN_YAW_STEP_DEG = 0.05  # smaller yaw changes are IMU noise
 _INACTIVE = (Phase.TAKEOFF, Phase.COMPLETE)
 _FIRE = (Phase.SEARCHING, Phase.TARGETING, Phase.DROPPING)
+_LANDING = (Phase.FIND_HELIPAD, Phase.LANDING)
 
 
 class MissionStateMachine:
@@ -201,10 +202,12 @@ class MissionStateMachine:
             ctx.odom.integrate(s.of_vx_ms, s.of_vy_ms, s.yaw_deg, dt)
 
     def _track_altitude_penalty(self, altitude_m: float | None, dt: float) -> None:
-        """Rulebook §VII: below 3.0 m in autonomous flight costs 5 points per 5 s."""
+        """Rulebook §VII: below 3.0 m in autonomous flight costs 5 points per 5 s. Not counted
+        while landing, which has to descend (ADR-0010; the referee does the same)."""
         ctx, rules = self._ctx, self._rules
         if (
             ctx.phase not in _INACTIVE
+            and ctx.phase not in _LANDING
             and altitude_m is not None
             and altitude_m < rules.alt_penalty_floor_m
         ):
