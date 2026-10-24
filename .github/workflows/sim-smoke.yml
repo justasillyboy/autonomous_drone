@@ -1,8 +1,8 @@
 name: Simulation smoke test
 
-# Builds the Gazebo + ArduCopter SITL image and runs it headless (software rendering):
-# 1. the ADR-0003 direction check (release gate), 2. one qualifier match scored by the
-# independent referee. Results are uploaded and summarised as annotations.
+# Builds the Gazebo + ArduCopter SITL image and runs scripts/sim_smoke.sh headless (software
+# rendering): world validation, the ADR-0003 direction check (release gate) and one qualifier
+# match scored by the independent referee. Logs are uploaded and their tails annotated.
 on:
   workflow_dispatch:
   push:
@@ -13,6 +13,7 @@ on:
       - uav_core/src/**
       - edge/src/**
       - .github/workflows/sim-smoke.yml
+      - scripts/sim_smoke.sh
 
 permissions:
   contents: read
@@ -46,47 +47,8 @@ jobs:
       - name: Fetch the model
         run: scripts/fetch_assets.sh yolo11s-seg_synth_export-2026-04-24.onnx
 
-      - name: Validate the generated world
-        run: |
-          docker run --rm -v "$PWD/results:/results" uav-sim:ci bash -c \
-            "ros2 run uav_sim make_world --seed 0 --out /results/world && \
-             GZ_SIM_RESOURCE_PATH=/results/world/models:\$ARDUPILOT_GAZEBO/models \
-             gz sdf -k /results/world/competition_field.sdf"
-
-      - name: Direction check (ADR-0003 release gate)
-        run: |
-          mkdir -p results
-          docker run --rm -v "$PWD/assets:/assets:ro" -v "$PWD/results:/results" uav-sim:ci \
-            timeout --signal=INT 600 ros2 launch uav_bringup sim.launch.py \
-            weights:=/assets/yolo11s-seg_synth_export-2026-04-24.onnx \
-            mode:=direction_check results_dir:=/results || true
-          python3 - <<'EOF'
-          import json, pathlib, sys
-          p = pathlib.Path("results/direction_check.json")
-          if not p.exists():
-              print("::error::direction check produced no result"); sys.exit(1)
-          r = json.loads(p.read_text())
-          level = "notice" if r["passed"] else "error"
-          print(f"::{level}::direction check {'passed' if r['passed'] else 'FAILED'}: {r['steps']}")
-          sys.exit(0 if r["passed"] else 1)
-          EOF
-
-      - name: Qualifier match, seed 0
-        run: |
-          docker run --rm -v "$PWD/assets:/assets:ro" -v "$PWD/results:/results" uav-sim:ci \
-            timeout --signal=INT 900 ros2 launch uav_bringup sim.launch.py \
-            weights:=/assets/yolo11s-seg_synth_export-2026-04-24.onnx \
-            seed:=0 results_dir:=/results || true
-          python3 - <<'EOF'
-          import json, pathlib, sys
-          p = pathlib.Path("results/qualifier-00000.json")
-          if not p.exists():
-              print("::error::the referee wrote no result"); sys.exit(1)
-          r = json.loads(p.read_text())
-          print(f"::notice::referee score {r['score']}, hit {r['targets_hit']}, "
-                f"landed on helipad {r['landed_on_helipad']}, failures {r['failures']}")
-          sys.exit(0 if r["takeoff"] else 1)
-          EOF
+      - name: World check, direction check (ADR-0003 gate), qualifier match
+        run: scripts/sim_smoke.sh uav-sim:ci yolo11s-seg_synth_export-2026-04-24.onnx
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
