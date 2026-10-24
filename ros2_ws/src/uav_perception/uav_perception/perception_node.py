@@ -1,7 +1,8 @@
 """perception_node: frames -> backend -> uav_core.perception -> /perception/detections.
 
-input:=topic subscribes /camera/image_raw (sim, HIL). input:=v4l2 reads the camera directly
-(on the Pi), so full frames never cross DDS. Detections carry the frame's capture stamp.
+input:=topic subscribes /camera/image_raw (sim), input:=compressed its JPEG version (HIL,
+over Ethernet), input:=v4l2 reads the camera directly (on the Pi), so full frames never cross
+DDS. Detections carry the frame's capture stamp.
 /perception/debug_image (detections drawn) is published only while someone subscribes, at
 most debug_rate_hz.
 """
@@ -12,7 +13,7 @@ import cv2
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from uav_core.config import MissionConfig, load_mission_config, with_hsv_ranges
 from uav_core.messages import fill_detection_msg
 from uav_core.perception.camera import Calibration, Undistorter
@@ -21,7 +22,12 @@ from uav_core.viz import draw_detections
 from uav_edge.runtime import load_backend
 from uav_interfaces.msg import Detection, Detections
 
-from uav_perception.pipeline import PerceptionPipeline, fill_image_msg, image_to_bgr
+from uav_perception.pipeline import (
+    PerceptionPipeline,
+    compressed_to_bgr,
+    fill_image_msg,
+    image_to_bgr,
+)
 
 RELIABLE = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
 
@@ -53,6 +59,13 @@ class PerceptionNode(Node):
             self.create_subscription(
                 Image, "/camera/image_raw", self.on_image, qos_profile_sensor_data
             )
+        elif source == "compressed":  # HIL: JPEG over the Ethernet link
+            self.create_subscription(
+                CompressedImage,
+                "/camera/image_raw/compressed",
+                self.on_compressed,
+                qos_profile_sensor_data,
+            )
         elif source == "v4l2":
             self.cap = cv2.VideoCapture(p("device", "/dev/video0").value, cv2.CAP_V4L2)
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(p("width", 640).value))
@@ -61,11 +74,14 @@ class PerceptionNode(Node):
                 raise RuntimeError("cannot open the v4l2 camera")
             self.create_timer(1.0 / float(p("fps", 30.0).value), self.on_grab)
         else:
-            raise ValueError(f"input must be 'topic' or 'v4l2', not {source!r}")
+            raise ValueError(f"input must be 'topic', 'compressed' or 'v4l2', not {source!r}")
         self.get_logger().info(f"perception_node ready ({source}, {weights})")
 
     def on_image(self, msg: Image) -> None:
         self.handle(image_to_bgr(msg), msg.header)
+
+    def on_compressed(self, msg: CompressedImage) -> None:
+        self.handle(compressed_to_bgr(msg), msg.header)
 
     def on_grab(self) -> None:
         stamp = self.get_clock().now()

@@ -47,3 +47,4 @@ __MACOSX/
 
 # simulation outputs (referee JSON, generated worlds)
 /results/
+/docker/wheels/*.whl

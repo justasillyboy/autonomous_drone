@@ -16,6 +16,7 @@ from mavros_msgs.msg import State
 from rclpy.node import Node
 from tf2_msgs.msg import TFMessage
 from uav_core.types import Round
+from uav_interfaces.msg import MissionStatus
 
 from uav_sim.balls import BallTracker
 from uav_sim.field import gate_clearance
@@ -43,6 +44,8 @@ class RefereeNode(Node):
         )
         self.create_subscription(State, "/mavros/state", self.on_state, 10)
         self.create_subscription(PointStamped, "/sim/f2", self.on_f2, 10)
+        self.create_subscription(MissionStatus, "/mission/status", self.on_status, 10)
+        self.self_reported: int | None = None
         self.create_timer(1.0, self.on_timer)
         self.get_logger().info(f"referee for {self.scenario.name}")
 
@@ -54,6 +57,9 @@ class RefereeNode(Node):
             self.ref.start(self._now())
             self.get_logger().info("ARM: match started")
         self.armed = msg.armed
+
+    def on_status(self, msg: MissionStatus) -> None:
+        self.self_reported = int(msg.score) + int(msg.penalties)
 
     def on_f2(self, msg: PointStamped) -> None:
         self.f2_xy = (msg.point.x, msg.point.y)
@@ -86,7 +92,11 @@ class RefereeNode(Node):
 
     def write(self, now: float) -> None:
         self.results_dir.mkdir(parents=True, exist_ok=True)
-        result = {"scenario": self.scenario.name, **self.ref.result(now)}
+        result = {
+            "scenario": self.scenario.name,
+            **self.ref.result(now),
+            "self_reported_score": self.self_reported,
+        }
         path = self.results_dir / f"{self.scenario.name}.json"
         path.write_text(json.dumps(result, indent=2) + "\n")
         self.written = True

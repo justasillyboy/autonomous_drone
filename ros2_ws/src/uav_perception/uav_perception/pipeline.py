@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import cv2
 import numpy as np
 from uav_core.config import PerceptionConfig
 from uav_core.perception import detect
@@ -30,6 +31,15 @@ def image_to_bgr(msg: Any) -> np.ndarray:
         return np.ascontiguousarray(img[:, :, ::-1])
     if msg.encoding == "mono8":
         return np.repeat(img, 3, axis=2)
+    return img
+
+
+def compressed_to_bgr(msg: Any) -> np.ndarray:
+    """sensor_msgs/CompressedImage (JPEG or PNG) -> BGR. Used for HIL, where Gazebo images
+    cross the Ethernet link compressed."""
+    img = cv2.imdecode(np.frombuffer(bytes(msg.data), np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError(f"cannot decode a {msg.format!r} image")
     return img
 
 

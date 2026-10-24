@@ -15,6 +15,8 @@
   <exec_depend>uav_hardware</exec_depend>
   <exec_depend>uav_sim</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>image_transport</exec_depend>
+  <exec_depend>compressed_image_transport</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
 

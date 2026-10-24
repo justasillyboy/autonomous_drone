@@ -2,13 +2,19 @@
 
 from types import SimpleNamespace as NS
 
+import cv2
 import numpy as np
 import pytest
 from uav_core.config import PerceptionConfig
 from uav_core.perception import RawInstance
 from uav_core.perception.camera import Calibration, Undistorter
 from uav_core.types import Color, TargetClass
-from uav_perception.pipeline import PerceptionPipeline, fill_image_msg, image_to_bgr
+from uav_perception.pipeline import (
+    PerceptionPipeline,
+    compressed_to_bgr,
+    fill_image_msg,
+    image_to_bgr,
+)
 
 
 def _img_msg(arr, encoding, pad=0):
@@ -58,3 +64,13 @@ def test_pipeline_undistorts_then_detects():
     used, dets = PerceptionPipeline(_Disc(), PerceptionConfig(), und).process(frame)
     assert used.shape == frame.shape
     assert len(dets) == 1 and dets[0].color is Color.RED
+
+
+def test_compressed_jpeg_decodes():
+    bgr = np.zeros((48, 64, 3), np.uint8)
+    bgr[..., 2] = 220
+    _, buf = cv2.imencode(".jpg", bgr)
+    out = compressed_to_bgr(NS(format="jpeg", data=buf.tobytes()))
+    assert out.shape == (48, 64, 3) and abs(int(out[24, 32, 2]) - 220) < 6
+    with pytest.raises(ValueError, match="jpeg"):
+        compressed_to_bgr(NS(format="jpeg", data=b"not an image"))

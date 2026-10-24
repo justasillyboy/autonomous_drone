@@ -36,5 +36,5 @@ def test_real_launch_starts_the_five_nodes():
 def test_sim_launch_declares_its_arguments():
     ld = _load("sim.launch.py")
     args = {e.name for e in ld.entities if isinstance(e, DeclareLaunchArgument)}
-    assert {"weights", "seed", "round", "results_dir", "gui"} <= args
+    assert {"weights", "seed", "round", "results_dir", "gui", "mode", "part", "fcu_url"} <= args
     assert any(isinstance(e, OpaqueFunction) for e in ld.entities)

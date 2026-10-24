@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Cyclone DDS for hardware-in-the-loop over a direct Ethernet cable: unicast to the peer
+     only, no multicast discovery. Set PEER_IP to the other machine and IFACE to the cable's
+     interface, then export CYCLONEDDS_URI=file:///path/to/cyclonedds.xml and
+     RMW_IMPLEMENTATION=rmw_cyclonedds_cpp on both sides. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="${IFACE}" priority="default" multicast="false"/>
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+      <MaxMessageSize>65500B</MaxMessageSize>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <Peers>
+        <Peer address="${PEER_IP}"/>
+      </Peers>
+      <MaxAutoParticipantIndex>32</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

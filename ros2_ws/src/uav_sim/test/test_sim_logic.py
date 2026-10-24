@@ -296,3 +296,43 @@ def test_motion_helpers():
     # facing north (ENU yaw 90): the drone's right is east (+x)
     assert motion_along("right", (0, 0, 3, 90.0), (1, 0, 3, 90.0)) == pytest.approx(1.0)
     assert motion_along("clockwise", (0, 0, 3, 10.0), (0, 0, 3, -10.0)) == pytest.approx(20.0)
+
+
+# -- Monte Carlo report ---------------------------------------------------------------------
+
+
+def _result(score, missed=(), landed=True, failures=(), self_score=None):
+    return {"score": score, "targets_missed": list(missed), "landed_on_helipad": landed,
+            "failures": list(failures), "self_reported_score": self_score}  # fmt: skip
+
+
+def test_report_success_rate_failures_and_self_report_gap(tmp_path):
+    from uav_sim import report
+
+    runs = [
+        _result(200, self_score=200),
+        _result(170, missed=["F5"], failures=["targets_missed"], self_score=220),
+        _result(150, landed=False, failures=["landed_outside_helipad"]),
+        _result(200),
+    ]
+    for k, r in enumerate(runs):
+        (tmp_path / f"qualifier-{k:05d}.json").write_text(json.dumps(r))
+    (tmp_path / "direction_check.json").write_text('{"passed": true}')  # ignored
+    s = report.summarise(report.load_results(tmp_path))
+    assert s["runs"] == 4 and s["success_rate"] == 0.5
+    lo, hi = s["success_ci95"]
+    assert 0.0 < lo < 0.5 < hi < 1.0
+    assert s["failures"] == {"targets_missed": 1, "landed_outside_helipad": 1}
+    assert s["self_report_gap_mean"] == 25.0 and s["self_report_overclaims"] == 1
+    text = report.markdown(s)
+    assert "**50%**" in text and "| 200-219 | 2 |" in text
+    out = tmp_path / "report.md"
+    assert report.main([str(tmp_path), "--out", str(out)]) == 0 and out.exists()
+
+
+def test_wilson_interval_edges():
+    from uav_sim.report import wilson
+
+    assert wilson(0, 0) == (0.0, 0.0)
+    lo, hi = wilson(50, 50)
+    assert hi == 1.0 and lo > 0.9

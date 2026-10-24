@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake git curl ca-certificates ccache \
         python3-pip python3-pytest python3-dev \
         ros-jazzy-ros-gz ros-jazzy-mavros ros-jazzy-mavros-extras ros-jazzy-launch-testing-ros \
+        ros-jazzy-image-transport ros-jazzy-compressed-image-transport \
         rapidjson-dev geographiclib-tools libopencv-dev \
         libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
         gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl \
