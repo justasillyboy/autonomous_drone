@@ -9,7 +9,10 @@ sensor's rotation relative to base_link: check it on the bench (tilt the nose up
 
 from __future__ import annotations
 
+import contextlib
+
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu
@@ -62,8 +65,9 @@ def main(args=None) -> None:
     node = Bno080Node()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        with contextlib.suppress(KeyboardInterrupt):  # a second Ctrl-C during teardown
+            node.destroy_node()
         rclpy.try_shutdown()

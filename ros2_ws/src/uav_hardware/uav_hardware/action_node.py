@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import rclpy
 from mavros_msgs.msg import ExtendedState, PositionTarget, State
 from mavros_msgs.srv import CommandLong, CommandTOL, SetMode
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from uav_core.messages import command_from_msg
@@ -107,8 +110,9 @@ def main(args=None) -> None:
     node = ActionNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        with contextlib.suppress(KeyboardInterrupt):  # a second Ctrl-C during teardown
+            node.destroy_node()
         rclpy.try_shutdown()

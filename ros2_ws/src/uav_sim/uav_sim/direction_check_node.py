@@ -4,10 +4,12 @@ mode:=direction_check."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from tf2_msgs.msg import TFMessage
@@ -61,8 +63,9 @@ def main(args=None) -> None:
     node = DirectionCheckNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        with contextlib.suppress(KeyboardInterrupt):  # a second Ctrl-C during teardown
+            node.destroy_node()
         rclpy.try_shutdown()

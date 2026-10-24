@@ -9,8 +9,11 @@ most debug_rate_hz.
 
 from __future__ import annotations
 
+import contextlib
+
 import cv2
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import CompressedImage, Image
@@ -122,8 +125,9 @@ def main(args=None) -> None:
     node = PerceptionNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        with contextlib.suppress(KeyboardInterrupt):  # a second Ctrl-C during teardown
+            node.destroy_node()
         rclpy.try_shutdown()

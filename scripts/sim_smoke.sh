@@ -9,9 +9,14 @@ WEIGHTS=/assets/$2
 mkdir -p results
 STATUS=0
 
-annotate() {  # level, title, file: the last 60 lines as one annotation
+# Lines that explain a match: FC messages (PreArm, EKF, GPS, mode changes), arming, the
+# mission phases, refusals and errors. The shutdown noise after the timeout is left out.
+DIAG='FCU|PreArm|[Aa]rm|EKF|GPS|GUIDED|LAND|[Tt]akeoff|phase|refused|rejected|unavailable|ERROR|Error|direction check|referee|score'
+
+annotate() {  # level, title, file: diagnostic lines, then the last 30 lines
   local body
-  body=$(tail -n 60 "$3" | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+  body=$( (grep -E "$DIAG" "$3" | grep -v -E 'Traceback|^\s+File ' | head -n 80
+    echo "--- tail"; tail -n 30 "$3") | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
   echo "::$1 title=$2::$body"
 }
 
@@ -27,7 +32,8 @@ phase() {  # name, timeout seconds, command...
 }
 
 phase world 120 bash -c 'set -x; ros2 run uav_sim make_world --seed 0 --out /results/world \
-  && export GZ_SIM_RESOURCE_PATH=/results/world/models:$ARDUPILOT_GAZEBO/models \
+  && export SDF_PATH=/results/world/models:$ARDUPILOT_GAZEBO/models \
+  && export GZ_SIM_RESOURCE_PATH=$SDF_PATH \
   && which gz && gz sdf -k /results/world/competition_field.sdf \
   && gz sdf -k /results/world/models/iris_downcam/model.sdf' || STATUS=1
 

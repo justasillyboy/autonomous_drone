@@ -6,8 +6,11 @@ MAV_CMD_DO_SET_SERVO); the simulated ball then falls, bounces and rolls under ph
 
 from __future__ import annotations
 
+import contextlib
+
 import rclpy
 from mavros_msgs.msg import RCOut
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from ros_gz_interfaces.srv import SpawnEntity
 from tf2_msgs.msg import TFMessage
@@ -62,8 +65,9 @@ def main(args=None) -> None:
     node = BallDropperNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        with contextlib.suppress(KeyboardInterrupt):  # a second Ctrl-C during teardown
+            node.destroy_node()
         rclpy.try_shutdown()

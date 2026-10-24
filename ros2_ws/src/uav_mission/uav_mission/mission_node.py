@@ -7,9 +7,12 @@ hover command when perception goes silent, without touching the mission state.
 
 from __future__ import annotations
 
+import contextlib
+
 import rclpy
 from geometry_msgs.msg import TwistStamped
 from mavros_msgs.msg import ExtendedState, State
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import Imu, Range
@@ -136,8 +139,9 @@ def main(args=None) -> None:
     node = MissionNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        with contextlib.suppress(KeyboardInterrupt):  # a second Ctrl-C during teardown
+            node.destroy_node()
         rclpy.try_shutdown()

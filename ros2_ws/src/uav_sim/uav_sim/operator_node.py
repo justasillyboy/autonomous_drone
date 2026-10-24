@@ -5,9 +5,12 @@ the match clock in mission_node and the referee; mission_node's TAKEOFF phase do
 
 from __future__ import annotations
 
+import contextlib
+
 import rclpy
 from mavros_msgs.msg import State
 from mavros_msgs.srv import CommandBool, SetMode
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 RETRY_S = 2.0
@@ -43,9 +46,21 @@ class OperatorNode(Node):
             self.done = True
             self.get_logger().info("armed in GUIDED: match on")
         elif s.mode != "GUIDED" and self.mode.service_is_ready():
-            self.mode.call_async(SetMode.Request(custom_mode="GUIDED"))
+            fut = self.mode.call_async(SetMode.Request(custom_mode="GUIDED"))
+            fut.add_done_callback(lambda f: self._log(f, "GUIDED", "mode_sent"))
         elif s.mode == "GUIDED" and self.arm.service_is_ready():
-            self.arm.call_async(CommandBool.Request(value=True))
+            fut = self.arm.call_async(CommandBool.Request(value=True))
+            fut.add_done_callback(lambda f: self._log(f, "arm", "success"))
+
+    def _log(self, future, what: str, field: str) -> None:
+        """The FC's reason for a refusal (PreArm: ...) is in MAVROS's FCU log lines."""
+        try:
+            ok = bool(getattr(future.result(), field))
+        except Exception as exc:  # the service call itself failed
+            self.get_logger().error(f"{what} call failed: {exc}")
+            return
+        if not ok:
+            self.get_logger().warn(f"{what} refused, retrying", throttle_duration_sec=10.0)
 
 
 def main(args=None) -> None:
@@ -53,8 +68,9 @@ def main(args=None) -> None:
     node = OperatorNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        with contextlib.suppress(KeyboardInterrupt):  # a second Ctrl-C during teardown
+            node.destroy_node()
         rclpy.try_shutdown()

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import rclpy
 from geometry_msgs.msg import PointStamped
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from ros_gz_interfaces.srv import SetEntityPose
 from uav_core.types import Round
@@ -49,8 +52,9 @@ def main(args=None) -> None:
     node = TargetMoverNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        with contextlib.suppress(KeyboardInterrupt):  # a second Ctrl-C during teardown
+            node.destroy_node()
         rclpy.try_shutdown()

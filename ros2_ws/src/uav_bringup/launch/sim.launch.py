@@ -119,6 +119,7 @@ def _stack_side(get, out: Path, round_: Round) -> list:
             package="mavros",
             executable="mavros_node",
             parameters=[{"fcu_url": get("fcu_url")}, SIM_TIME],
+            output="screen",  # "FCU: PreArm: ..." explains a refused arm
         ),
         Node(
             package="uav_hardware", executable="action_node", parameters=[SIM_TIME], output="screen"

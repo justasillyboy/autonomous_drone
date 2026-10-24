@@ -7,12 +7,14 @@ drone's position (field.gate_clearance), balls when they come to rest (balls.Bal
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
 import rclpy
 from geometry_msgs.msg import PointStamped
 from mavros_msgs.msg import State
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from tf2_msgs.msg import TFMessage
 from uav_core.types import Round
@@ -108,10 +110,11 @@ def main(args=None) -> None:
     node = RefereeNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         if not node.written:
             node.write(node._now())
-        node.destroy_node()
+        with contextlib.suppress(KeyboardInterrupt):  # a second Ctrl-C during teardown
+            node.destroy_node()
         rclpy.try_shutdown()
