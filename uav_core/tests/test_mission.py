@@ -226,3 +226,26 @@ def test_reset_starts_a_retry_from_scratch():
     sm.reset()
     assert sm.phase is Phase.TAKEOFF and sm.last_command.action == "RETRY_RESET"
     assert sm.status().score == 0
+
+
+def test_tof_offset_makes_the_altitude_that_of_the_lowest_point():
+    from uav_core.config import EstimationConfig, MissionConfig
+    from uav_core.mission import MissionStateMachine
+    from uav_core.types import AltSource, SensorSnapshot
+
+    cfg = MissionConfig(estimation=EstimationConfig(tof_ground_offset_m=0.1))
+    sm = MissionStateMachine(cfg)
+    sm.skip_takeoff()
+    for k in range(6):  # fill the median window
+        out = sm.step(k * 0.05, [], SensorSnapshot(tof_alt_m=3.1), (640, 480))
+    assert out.status.alt_source is AltSource.TOF
+    # 3.1 m at the sensor is 3.0 m at the skids: below the 3.0 m floor once it holds 5 s
+    for k in range(6, 6 + 110):
+        out = sm.step(k * 0.05, [], SensorSnapshot(tof_alt_m=3.1), (640, 480))
+    assert out.status.penalties == 0  # exactly 3.0: not below
+    cfg2 = MissionConfig(estimation=EstimationConfig(tof_ground_offset_m=0.15))
+    sm2 = MissionStateMachine(cfg2)
+    sm2.skip_takeoff()
+    for k in range(120):
+        out2 = sm2.step(k * 0.05, [], SensorSnapshot(tof_alt_m=3.1), (640, 480))
+    assert out2.status.penalties == -5  # 2.95 m for 6 s

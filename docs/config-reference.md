@@ -113,6 +113,7 @@ Rangefinder filtering and camera/IMU synchronisation.
 | Key | Default | Unit | Constraints | Description | Source |
 |---|---|---|---|---|---|
 | `estimation.tof_window` | 5 | samples | ≥ 3 | ToF median window | legacy tuning |
+| `estimation.tof_ground_offset_m` | 0 | m | ≥ 0 | Rangefinder reading with the drone standing on the floor; subtracted so the ToF altitude is that of the drone's lowest point. Measure it on each airframe | rulebook §III-4 (lowest point >= 3.0 m at release) |
 | `estimation.tof_spike_threshold_m` | 1.5 | m | > 0 | ToF deviation from the median rejected as an obstacle spike | legacy tuning |
 | `estimation.tof_spike_reset_count` | 4 | samples | ≥ 1 | Consecutive spikes treated as a real step change | legacy tuning |
 | `estimation.camera_latency_s` | 0.07 | s | ≥ 0 | Capture-to-decision latency used when a frame has no capture stamp | legacy tuning |

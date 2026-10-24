@@ -160,9 +160,13 @@ class MissionStateMachine:
             enter_helipad(ctx)
 
     def _filter_tof(self, sensors: SensorSnapshot) -> SensorSnapshot:
+        """Median/spike filter, then the mounting offset: the rulebook's 3.0 m is measured
+        at the drone's lowest point, while the rangefinder sits above it."""
         if sensors.tof_alt_m is None:
             return sensors
         filtered = self._ctx.tof.update(sensors.tof_alt_m)
+        if filtered is not None:  # None: a rejected spike
+            filtered -= self._cfg.estimation.tof_ground_offset_m
         if filtered == sensors.tof_alt_m:
             return sensors
         return dataclasses.replace(sensors, tof_alt_m=filtered)

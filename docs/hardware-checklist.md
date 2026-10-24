@@ -44,6 +44,13 @@ Run `ros2 topic echo /imu/data` and check, with the drone in your hands:
 
 If not, set `mount_rpy_deg` in `ros2_ws/src/uav_bringup/config/real.yaml`.
 
+## 4b. Rangefinder offset
+
+With the drone standing on the floor, read `ros2 topic echo /mavros/rangefinder/rangefinder`
+and set `estimation.tof_ground_offset_m` to that reading in the mission YAML. The rulebook's
+3.0 m is measured at the drone's lowest point; without the offset a 3.05 m ToF reading can
+mean skids below 3.0 m.
+
 ## 5. Drop servo
 
 - Bench test with `require_guided: false`; publish one `FlightCommand` with

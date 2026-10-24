@@ -259,6 +259,14 @@ class EstimationConfig(_Section):
     """Rangefinder filtering and camera/IMU synchronisation."""
 
     tof_window: int = _field(5, "samples", "ToF median window", ge=3)
+    tof_ground_offset_m: float = _field(
+        0.0,
+        "m",
+        "Rangefinder reading with the drone standing on the floor; subtracted so the ToF "
+        "altitude is that of the drone's lowest point. Measure it on each airframe",
+        source="rulebook §III-4 (lowest point >= 3.0 m at release)",
+        ge=0.0,
+    )
     tof_spike_threshold_m: float = _field(
         1.5, "m", "ToF deviation from the median rejected as an obstacle spike", gt=0.0
     )
