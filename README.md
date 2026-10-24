@@ -63,6 +63,8 @@ Measured so far, without hardware:
 | `scripts/publish_assets.sh` | Uploads `assets/` to a GitHub Release (maintainers) |
 | `docs/config-reference.md` | Every mission config key with default, unit, range and rule source; generated from the schema, a test fails if it drifts |
 | `docs/decisions/` | Architecture decision records |
+| `docs/architecture.md` | Layers, runtime graph, data flow, timing budget |
+| `docs/competition-rules.md` | The rules the autonomous round depends on |
 | `docs/simulation.md` | How the closed-loop simulation and its referee work |
 | `docs/hardware-checklist.md` | The steps that need the drone, in order |
 | `docs/superpowers/` | Design spec and implementation plans |
