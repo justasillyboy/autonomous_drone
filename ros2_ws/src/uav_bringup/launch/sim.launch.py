@@ -155,6 +155,7 @@ def _stack_side(get, out: Path, round_: Round) -> list:
             package="uav_mission",
             executable="mission_node",
             parameters=[{"finals": round_ is Round.FINALS}, SIM_TIME],
+            remappings=[("/imu/data", "/mavros/imu/data")],  # no BNO080 in sim: the FC's IMU
             output="screen",
         ),
     ]

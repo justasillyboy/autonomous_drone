@@ -62,8 +62,21 @@ def make_scenario(
     )
 
 
-# The drop servo on AUX channel 9 is driven only by MAV_CMD_DO_SET_SERVO (function 0).
-BASE_SITL_PARAMS = {"SERVO9_FUNCTION": 0}
+# Telemetry the stack reads, at Hz, on SERIAL0 (TCP 5760, MAVROS). ArduPilot streams nothing
+# until asked, which MAVProxy or a GCS normally does: without these MAVROS publishes no
+# altitude, velocity, IMU, landed state or servo outputs.
+STREAM_RATES_HZ = {
+    "SR0_RAW_SENS": 20,  # SCALED_IMU: /mavros/imu/data
+    "SR0_EXTRA1": 20,  # ATTITUDE: /mavros/imu/data orientation
+    "SR0_POSITION": 20,  # LOCAL/GLOBAL_POSITION: velocity_body, rel_alt
+    "SR0_EXTRA3": 10,  # DISTANCE_SENSOR: /mavros/rangefinder/rangefinder
+    "SR0_EXT_STAT": 5,  # SYS_STATUS, GPS
+    "SR0_EXTRA2": 5,  # VFR_HUD
+    "SR0_RC_CHAN": 10,  # SERVO_OUTPUT_RAW: /mavros/rc/out (ball_dropper)
+}
+# The drop servo on AUX channel 9 is driven only by MAV_CMD_DO_SET_SERVO (function 0); a
+# simulated downward rangefinder stands in for the ToF sensor.
+BASE_SITL_PARAMS = {"SERVO9_FUNCTION": 0, "RNGFND1_TYPE": 100, **STREAM_RATES_HZ}
 
 
 def sitl_param_file(s: Scenario) -> str:

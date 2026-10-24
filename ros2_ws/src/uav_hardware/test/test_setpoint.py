@@ -77,6 +77,13 @@ def test_takeoff_command_once_when_armed_on_the_ground():
     assert gate.on_command(TAKEOFF, 9.0).takeoff_alt_m == 3.3  # retry flight
 
 
+def test_takeoff_with_unknown_landed_state_but_not_when_airborne():
+    unknown = ActionGate(mode="GUIDED", armed=True)  # no EXTENDED_SYS_STATE yet
+    assert unknown.on_command(TAKEOFF, 0.0).takeoff_alt_m == 3.3
+    airborne = ActionGate(mode="GUIDED", armed=True, on_ground=False)
+    assert airborne.on_command(TAKEOFF, 0.0).takeoff_alt_m is None
+
+
 def test_land_mode_once_when_the_mission_lands():
     gate = ActionGate(mode="GUIDED")
     approach = FlightCommand(Phase.LANDING, "APPROACH", vz=0.3)

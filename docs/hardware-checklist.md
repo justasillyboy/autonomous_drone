@@ -11,6 +11,12 @@ the hardware, in order. Do them with the **propellers removed** until step 6.
   `ros2_ws` (the same steps as `scripts/ros_ci.sh`).
 - MAVROS: `ros-jazzy-mavros` plus the GeographicLib datasets
   (`ros2 run mavros install_geographiclib_datasets.sh`).
+- Stream rates on the FC port wired to the Pi (`SRn_*` for SERIALn, e.g. `SR2_*` on
+  TELEM2): ArduPilot streams nothing until asked. Use the values of `STREAM_RATES_HZ` in
+  `ros2_ws/src/uav_sim/uav_sim/scenario.py`, then check that `/mavros/imu/data`,
+  `/mavros/global_position/rel_alt`, `/mavros/local_position/velocity_body`,
+  `/mavros/extended_state` and `/mavros/rangefinder/rangefinder` publish at those rates
+  (`ros2 topic hz`).
 
 ## 2. Camera
 

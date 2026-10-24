@@ -68,6 +68,8 @@ class ActionGate:
       manually lands anywhere). An unknown mode (no /mavros/state yet) blocks too.
     - Takeoff: ArduCopter ignores velocity setpoints while landed, so the first TAKEOFF
       command while armed on the ground also requests MAV_CMD_NAV_TAKEOFF to takeoff_alt_m.
+      An unknown landed state (no EXTENDED_SYS_STATE yet) counts as on the ground: arming
+      happens on the ground, and ArduCopter refuses NAV_TAKEOFF once it is flying.
     - Landing: once the mission is over the helipad and says LAND, the FC is switched to LAND
       mode, which descends, detects touchdown and disarms (GUIDED velocity descent would sit
       on the pad with motors spinning).
@@ -98,7 +100,8 @@ class ActionGate:
             pwm = self.drop_pwm
             self._release_at_s = now_s + self.pulse_s
         takeoff = None
-        if cmd.phase is Phase.TAKEOFF and self.armed and self.on_ground and not self._takeoff_sent:
+        airborne = self.on_ground is False
+        if cmd.phase is Phase.TAKEOFF and self.armed and not airborne and not self._takeoff_sent:
             takeoff, self._takeoff_sent = self.takeoff_alt_m, True
         mode = None
         if cmd.phase is Phase.LANDING and cmd.action == "LAND" and not self._land_sent:

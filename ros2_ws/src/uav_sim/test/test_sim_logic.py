@@ -174,6 +174,7 @@ def test_scenarios_are_reproducible_and_carry_sitl_noise():
     assert make_scenario(5, fixed_layout=False).layout != qualifier_layout()
     text = sitl_param_file(a)
     assert f"SIM_WIND_SPD {a.wind_speed_ms}\n" in text and "SIM_BARO_RND" in text
+    assert "SR0_POSITION 20\n" in text  # MAVROS gets no telemetry without stream rates
 
 
 def test_world_has_every_object_and_spawns_the_drone_on_the_pad():
@@ -205,7 +206,7 @@ def test_write_scenario_and_cli(tmp_path, capsys):
     meta = json.loads((tmp_path / "scenario.json").read_text())
     assert meta["layout"]["round"] == "finals" and len(meta["layout"]["targets"]) == 5
     parm = (tmp_path / "sitl.parm").read_text()
-    assert parm.startswith("SERVO9_FUNCTION 0\n") and "SIM_ACC_RND" in parm
+    assert "SERVO9_FUNCTION 0\n" in parm and "SIM_ACC_RND" in parm
     model = ET.parse(tmp_path / "models" / "iris_downcam" / "model.sdf").getroot()
     cam = model.find(".//sensor[@name='downcam']/camera")
     assert cam.find("image/width").text == "640"
