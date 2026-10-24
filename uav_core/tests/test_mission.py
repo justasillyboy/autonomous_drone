@@ -249,3 +249,37 @@ def test_tof_offset_makes_the_altitude_that_of_the_lowest_point():
     for k in range(120):
         out2 = sm2.step(k * 0.05, [], SensorSnapshot(tof_alt_m=3.1), (640, 480))
     assert out2.status.penalties == -5  # 2.95 m for 6 s
+
+
+def test_only_target_coloured_circles_feed_the_vision_altitude():
+    from uav_core.config import MissionConfig
+    from uav_core.mission import MissionStateMachine
+    from uav_core.types import Color, Detection, SensorSnapshot, TargetClass
+
+    sm = MissionStateMachine(MissionConfig())
+    sm.skip_takeoff()
+    big_yellow = Detection(
+        TargetClass.CIRCLE, Color.YELLOW, 100, 100, 120, (0, 0, 220, 220), 0.9, 0.9, False
+    )
+    sm.step(0.0, [big_yellow], SensorSnapshot(), (640, 480))
+    assert sm._ctx.last_z_est is None  # the first target is red: yellow says nothing
+    red = Detection(
+        TargetClass.CIRCLE, Color.RED, 320, 240, 80, (240, 160, 400, 320), 0.9, 0.9, False
+    )
+    sm.step(0.05, [big_yellow, red], SensorSnapshot(), (640, 480))
+    assert sm._ctx.last_z_est == pytest.approx(500.0 * 1.0 / 160.0)  # f * D / (2 r)
+
+
+def test_recovery_ignores_oversized_discs():
+    from uav_core.config import MissionConfig
+    from uav_core.mission import MissionStateMachine
+    from uav_core.types import Color, Detection, Phase, SensorSnapshot, TargetClass
+
+    sm = MissionStateMachine(MissionConfig())
+    sm.skip_takeoff()
+    sm._ctx.phase = Phase.RECOVERY
+    huge = Detection(
+        TargetClass.CIRCLE, Color.RED, 320, 240, 300, (20, 0, 620, 480), 0.9, 0.9, False
+    )
+    out = sm.step(0.0, [huge], SensorSnapshot(fc_alt_m=3.4), (640, 480))
+    assert out.status.phase is Phase.RECOVERY
