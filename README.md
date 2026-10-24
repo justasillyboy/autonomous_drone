@@ -20,9 +20,9 @@ camera, ArduPilot flight controller via MAVROS.
 | M1 Core: `uav_core` + ROS 2 packages | Done in code: `uav_core`, inference backends, tools, ROS 2 nodes with `colcon test` in CI. Needs hardware to go further |
 | M2 Closed-loop simulation (Gazebo + ArduPilot SITL) | Field, independent referee, ball dropper, moving F2, direction check, Docker image and CI smoke test written; first runs in CI |
 | M3 ML experiments on real images | Frozen time-block split of the real frames, metrics with bootstrap CIs, legacy baseline measured; training to do (needs a GPU) |
-| M4 Edge: INT8 model on the Hailo-8L, benchmarks | Not started |
-| M5 Hardware-in-the-loop + Monte Carlo | Not started |
-| M6 Report and demo | Not started |
+| M4 Edge: INT8 model on the Hailo-8L, benchmarks | Hailo backend, raw-head decoder (checked against ONNX), `.hef` compile wrapper and benchmark tool written; needs the Pi and the Hailo DFC |
+| M5 Hardware-in-the-loop + Monte Carlo | Monte Carlo runner and report, HIL launch split, Pi image and DDS config written; needs the hardware |
+| M6 Report and demo | Architecture, rules, simulation and HIL docs and ten ADRs written; report and video wait for results |
 
 `uav_core` reproduces the legacy `mission.py` command sequence bit-exactly on 10 scripted
 scenarios (15,350 steps at 100 Hz). Python CI: about 210 tests, 98 % line coverage; ROS CI:
@@ -51,7 +51,7 @@ Measured so far, without hardware:
 | Path | Contents |
 |---|---|
 | `uav_core/` | Perception, estimation, control, mission logic and HUD in pure Python (no ROS), with golden characterisation tests against the legacy code |
-| `edge/` | Inference backends behind one interface: ONNX Runtime, Ultralytics (Hailo in M4) |
+| `edge/` | Inference backends behind one interface (ONNX Runtime, Ultralytics, Hailo-8L), `.hef` compiler wrapper, benchmark |
 | `tools/` | `uav-calibrate-camera`, `uav-hsv` (fit or tune colour ranges), `uav-run-video` (replay a flight with the HUD) |
 | `ros2_ws/src/` | ROS 2 Jazzy packages: `uav_interfaces`, `uav_perception`, `uav_mission`, `uav_hardware`, `uav_sim`, `uav_bringup` |
 | `docker/` | Simulation image (Gazebo Harmonic + ArduCopter SITL + the stack) and compose file |
@@ -66,6 +66,7 @@ Measured so far, without hardware:
 | `docs/architecture.md` | Layers, runtime graph, data flow, timing budget |
 | `docs/competition-rules.md` | The rules the autonomous round depends on |
 | `docs/simulation.md` | How the closed-loop simulation and its referee work |
+| `docs/hil.md` | Hardware-in-the-loop setup (Mac simulates, Pi flies) |
 | `docs/hardware-checklist.md` | The steps that need the drone, in order |
 | `docs/superpowers/` | Design spec and implementation plans |
 
